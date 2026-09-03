@@ -7,6 +7,14 @@ terraform {
       version = "~> 5.3"
     }
   }
+
+  backend "azurerm" {
+    resource_group_name  = "rg-parcelquote-tfstate-uks-01"
+    storage_account_name = "stparcelquotetfstuks01"
+    container_name       = "tfstate"
+    key                  = "bootstrap.tfstate"
+    use_azuread_auth     = true
+  }
 }
 
 provider "azurerm" {
