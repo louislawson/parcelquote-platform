@@ -33,7 +33,7 @@ identity federation (OIDC) — there are no stored credentials anywhere in the p
 
 Work in progress. Built in phases, each independently functional.
 
-- [x] **Phase 0** — Repository, Azure DevOps project, federated identity, Terraform remote state
+- [ ] **Phase 0** — Repository, Azure DevOps project, federated identity, Terraform remote state
 - [ ] **Phase 1** — Application, tests, Dockerfile, CI to Container Registry
 - [ ] **Phase 2** — Terraform modules, dev environment, continuous deployment
 - [ ] **Phase 3** — Code quality and security gates
