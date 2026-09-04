@@ -1,6 +1,6 @@
 location_long = ""
 location_short = ""
 project_app_service = ""
-devops_project_object_id = ""
 az_subscription_id = ""
 owner = ""
+pipeline_principal_ids = {}

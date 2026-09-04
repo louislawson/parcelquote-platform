@@ -5,6 +5,10 @@ locals {
     managed-by = "terraform"
     source     = "infra/bootstrap"
   }
+  environment_resource_group_ids = {
+    dev  = azurerm_resource_group.rg_dev.id
+    prod = azurerm_resource_group.rg_prod.id
+  }
 }
 
 data "azurerm_client_config" "current" {}
@@ -77,6 +81,18 @@ resource "azurerm_storage_container" "tfstate" {
   }
 }
 
+resource "azurerm_storage_container" "environment_state" {
+  for_each = toset(var.environments)
+
+  name                  = "tfstate-${each.key}"
+  storage_account_id    = azurerm_storage_account.st_tfstate.id
+  container_access_type = "private"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 resource "azurerm_role_assignment" "tfstate_operator" {
   scope                = azurerm_storage_account.st_tfstate.id
   role_definition_name = "Storage Blob Data Contributor"
@@ -84,10 +100,19 @@ resource "azurerm_role_assignment" "tfstate_operator" {
 }
 
 resource "azurerm_role_assignment" "tfstate_pipeline" {
-  count = var.devops_project_object_id == "" ? 0 : 1
+  for_each = var.pipeline_principal_ids
 
-  scope                = azurerm_storage_account.st_tfstate.id
+  scope                = azurerm_storage_container.environment_state[each.key].id
   role_definition_name = "Storage Blob Data Contributor"
-  principal_id         = var.devops_project_object_id
+  principal_id         = each.value
+  principal_type       = "ServicePrincipal"
+}
+
+resource "azurerm_role_assignment" "pipeline_environment_contributor" {
+  for_each = var.pipeline_principal_ids
+
+  scope                = local.environment_resource_group_ids[each.key]
+  role_definition_name = "Contributor"
+  principal_id         = each.value
   principal_type       = "ServicePrincipal"
 }
