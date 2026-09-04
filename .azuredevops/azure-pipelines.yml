@@ -1,0 +1,23 @@
+trigger: none
+
+pool:
+  vmImage: "ubuntu-latest"
+
+stages:
+  - stage: Verify
+    displayName: "Verify platform access"
+    jobs:
+      - job: AzureAccess
+        displayName: "Azure authentication and permissions"
+        steps:
+          - task: AzureCLI@2
+            displayName: "Verify federated identity and RBAC"
+            inputs:
+              azureSubscription: "azure-parcelquote-dev"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                set -euo pipefail
+                az account show -o table
+                az group show -n rg-parcelquote-dev-uks-01 -o table
+                az storage blob list --account-name stparcelquotetfstuks01 -c tfstate-dev --auth-mode login -o table
