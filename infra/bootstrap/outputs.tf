@@ -21,3 +21,7 @@ output "tfstate_storage_account" {
 output "tfstate_container" {
   value = azurerm_storage_container.tfstate.name
 }
+
+output "environment_state_containers" {
+  value = { for env, container in azurerm_storage_container.environment_state : env => container.name }
+}
