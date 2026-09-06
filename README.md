@@ -14,6 +14,12 @@ applies Terraform to provision infrastructure, then deploys a new Container Apps
 revision and shifts traffic to it incrementally. Authentication to Azure uses workload
 identity federation (OIDC) — there are no stored credentials anywhere in the pipeline.
 
+Phase 0 is complete: that identity chain is live, and Terraform state is remote and
+isolated per environment. The remaining stages arrive with the phases below.
+
+See [infra/bootstrap](infra/bootstrap/README.md) for how the foundational resources
+are provisioned and what permissions they require.
+
 ## Stack
 
 | Layer          | Technology                                                            |
@@ -33,7 +39,7 @@ identity federation (OIDC) — there are no stored credentials anywhere in the p
 
 Work in progress. Built in phases, each independently functional.
 
-- [ ] **Phase 0** — Repository, Azure DevOps project, federated identity, Terraform remote state
+- [x] **Phase 0** — Repository, Azure DevOps project, federated identity, Terraform remote state
 - [ ] **Phase 1** — Application, tests, Dockerfile, CI to Container Registry
 - [ ] **Phase 2** — Terraform modules, dev environment, continuous deployment
 - [ ] **Phase 3** — Code quality and security gates
@@ -44,9 +50,8 @@ Work in progress. Built in phases, each independently functional.
 
 ## Repository layout
 
-    app/      FastAPI service, tests and Dockerfile
-    infra/    Terraform — bootstrap, reusable modules, per-environment roots
-    docs/     Architecture documentation and decision records
+    .azuredevops/  Azure Pipelines definitions
+    infra/         Terraform — bootstrap, and per-environment modules from phase 2
 
 ## Licence
 
