@@ -71,3 +71,6 @@ terraform.rc
 
 # Local planning notes — not for publication
 planning/
+
+# Personal Claude Code settings — launch.json is shared and committed
+.claude/settings.local.json
