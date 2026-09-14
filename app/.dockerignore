@@ -1,0 +1,36 @@
+# The local virtualenv. Windows-built packages that would be useless in a Linux
+# image, and the builder stage creates its own from poetry.lock anyway.
+.venv/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+**/__pycache__/
+**/*.py[cod]
+
+# Never let a credential reach a build layer
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+
+# Coverage and type-check artefacts. The pipeline writes coverage.xml here for
+# SonarCloud before building, and a changing file busts the build cache.
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+
+# Build artefacts
+dist/
+**/*.egg-info/
+
+# Editor and OS noise
+.vscode/
+.idea/
+**/.DS_Store
+**/Thumbs.db
+
+# Not needed inside the image
+Dockerfile
+.dockerignore
