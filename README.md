@@ -52,6 +52,7 @@ Work in progress. Built in phases, each independently functional.
 
     .azuredevops/  Azure Pipelines definitions
     infra/         Terraform — bootstrap, and per-environment modules from phase 2
+    app/           FastAPI service, tests and Dockerfile
 
 ## Licence
 

@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "parcelquote",
+      "runtimeExecutable": "poetry",
+      "runtimeArgs": [
+        "-C",
+        "app",
+        "run",
+        "uvicorn",
+        "parcelquote.main:app",
+        "--port",
+        "8000"
+      ],
+      "port": 8000
+    }
+  ]
+}

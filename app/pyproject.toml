@@ -1,0 +1,38 @@
+[project]
+name = "parcelquote"
+version = "0.1.0"
+description = "Shipping quote API that prices parcels on chargeable weight and destination zone"
+authors = [{ name = "Louis Lawson", email = "louis.lawson@louislawson.co.uk" }]
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi (>=0.141.1,<0.142.0)",
+    "uvicorn[standard] (>=0.52.4,<0.53.0)",
+    "pydantic (>=2.13.5,<3.0.0)",
+]
+
+[dependency-groups]
+dev = [
+    "pytest (>=9.1.1,<10.0.0)",
+    "httpx (>=0.28.1,<0.29.0)",
+    "ruff (>=0.16.6,<0.17.0)",
+]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+packages = [{ include = "parcelquote", from = "src" }]
+
+[tool.ruff]
+target-version = "py312"
+src = ["src"]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers --strict-config"

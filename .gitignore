@@ -12,6 +12,8 @@ venv/
 .ruff_cache/
 .coverage
 htmlcov/
+dist/
+build/
 
 # Secrets and local config
 .env
@@ -69,3 +71,6 @@ terraform.rc
 
 # Local planning notes — not for publication
 planning/
+
+# Personal Claude Code settings — launch.json is shared and committed
+.claude/settings.local.json
