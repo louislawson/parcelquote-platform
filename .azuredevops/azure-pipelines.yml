@@ -1,23 +1,60 @@
-trigger: none
+variables:
+  REGISTRY_NAME: "crparcelquoteuks01"
+  LOGIN_SERVER: "crparcelquoteuks01.azurecr.io"
+
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include: [app, .azuredevops]
+
+pr:
+  branches:
+    include: [main]
+  paths:
+    include: [app, .azuredevops]
 
 pool:
-  vmImage: "ubuntu-latest"
+  vmImage: ubuntu-24.04
 
 stages:
-  - stage: Verify
-    displayName: "Verify platform access"
+  - stage: Validate
+    displayName: "Validate"
     jobs:
-      - job: AzureAccess
-        displayName: "Azure authentication and permissions"
+      - job: LintTestBuild
+        displayName: "Lint, test and build"
+        steps:
+          - script: |
+              set -euo pipefail
+              docker buildx build --target test app
+            displayName: "Lint and test"
+
+          - script: |
+              set -euo pipefail
+              docker buildx build --target runtime app
+            displayName: "Build runtime target"
+
+  - stage: Publish
+    displayName: "Publish image"
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: Push
+        displayName: "Container registry"
         steps:
           - task: AzureCLI@2
-            displayName: "Verify federated identity and RBAC"
+            displayName: "Build and push tagged image"
             inputs:
               azureSubscription: "azure-parcelquote-dev"
               scriptType: "bash"
               scriptLocation: "inlineScript"
               inlineScript: |
                 set -euo pipefail
-                az account show -o table
-                az group show -n rg-parcelquote-dev-uks-01 -o table
-                az storage blob list --account-name stparcelquotetfstuks01 -c tfstate-dev --auth-mode login -o table
+                az acr login --name "$REGISTRY_NAME"
+                TAG="${BUILD_SOURCEVERSION:0:7}"
+                docker buildx create --name ci --use --driver docker-container
+                docker buildx build --builder ci --target runtime \
+                  --build-arg "GIT_SHA=$TAG" \
+                  -t "$LOGIN_SERVER/parcelquote:$TAG" \
+                  --cache-from "type=registry,ref=$LOGIN_SERVER/parcelquote:buildcache" \
+                  --cache-to "type=registry,ref=$LOGIN_SERVER/parcelquote:buildcache,mode=max" \
+                  --push app

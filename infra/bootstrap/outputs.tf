@@ -32,3 +32,13 @@ output "environment_state_containers" {
   description = "State container name for each environment, keyed by environment. Each pipeline identity can read and write only its own."
   value       = { for env, container in azurerm_storage_container.environment_state : env => container.name }
 }
+
+output "container_registry_name" {
+  description = "Container registry shared by every environment. az acr login takes this short name, not the login server."
+  value       = azurerm_container_registry.cr_shared.name
+}
+
+output "container_registry_login_server" {
+  description = "Fully qualified registry host, such as crparcelquoteuks01.azurecr.io. Prefix image tags with it; known only once the registry exists."
+  value       = azurerm_container_registry.cr_shared.login_server
+}
