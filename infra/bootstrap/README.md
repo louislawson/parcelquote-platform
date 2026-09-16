@@ -64,6 +64,8 @@ Read the plan before applying. There should never be a destroy — see the note 
 
 | Name | Description |
 |------|-------------|
+| container\_registry\_login\_server | Fully qualified registry host, such as crparcelquoteuks01.azurecr.io. Prefix image tags with it; known only once the registry exists. |
+| container\_registry\_name | Container registry shared by every environment. az acr login takes this short name, not the login server. |
 | dev\_resource\_group | Resource group the dev environment deploys into. The dev pipeline identity holds Contributor here and nowhere else. |
 | environment\_state\_containers | State container name for each environment, keyed by environment. Each pipeline identity can read and write only its own. |
 | prod\_resource\_group | Resource group the prod environment deploys into. The prod pipeline identity holds Contributor here and nowhere else. |

@@ -9,6 +9,9 @@ locals {
     dev  = azurerm_resource_group.rg_dev.id
     prod = azurerm_resource_group.rg_prod.id
   }
+  # Only dev builds images. Prod promotes an existing tag, so it needs no
+  # registry grant at all until that changes.
+  image_build_environment = "dev"
 }
 
 data "azurerm_client_config" "current" {}
@@ -113,6 +116,40 @@ resource "azurerm_role_assignment" "pipeline_environment_contributor" {
 
   scope                = local.environment_resource_group_ids[each.key]
   role_definition_name = "Contributor"
+  principal_id         = each.value
+  principal_type       = "ServicePrincipal"
+}
+
+# ----------------------
+# ACR
+# ----------------------
+
+resource "azurerm_container_registry" "cr_shared" {
+  name                          = "cr${var.project_app_service}${var.location_short}01"
+  resource_group_name           = azurerm_resource_group.rg_shared.name
+  location                      = azurerm_resource_group.rg_shared.location
+  sku                           = "Basic"
+  admin_enabled                 = false
+  anonymous_pull_enabled        = false
+  public_network_access_enabled = true
+  role_assignment_mode          = "LegacyRegistryPermissions"
+  tags                          = merge(local.common_tags, { environment = "shared" })
+
+  lifecycle {
+    prevent_destroy = true
+
+    precondition {
+      condition     = contains(var.environments, local.image_build_environment)
+      error_message = "local.image_build_environment must name an entry in var.environments."
+    }
+  }
+}
+
+resource "azurerm_role_assignment" "acr_push" {
+  for_each = { for env, id in var.pipeline_principal_ids : env => id if env == local.image_build_environment }
+
+  scope                = azurerm_container_registry.cr_shared.id
+  role_definition_name = "AcrPush"
   principal_id         = each.value
   principal_type       = "ServicePrincipal"
 }
