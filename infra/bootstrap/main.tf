@@ -5,13 +5,16 @@ locals {
     managed-by = "terraform"
     source     = "infra/bootstrap"
   }
-  environment_resource_group_ids = {
-    dev  = azurerm_resource_group.rg_dev.id
-    prod = azurerm_resource_group.rg_prod.id
-  }
   # Only dev builds images. Prod promotes an existing tag, so it needs no
-  # registry grant at all until that changes.
+  # push grant at all until that changes.
   image_build_environment = "dev"
+  # Environments that run the container and therefore need to pull it.
+  # Prod joins this list when its environment is built.
+  deployment_environments = ["dev"]
+  environment_resource_groups = {
+    dev  = azurerm_resource_group.rg_dev
+    prod = azurerm_resource_group.rg_prod
+  }
 }
 
 data "azurerm_client_config" "current" {}
@@ -114,7 +117,7 @@ resource "azurerm_role_assignment" "tfstate_pipeline" {
 resource "azurerm_role_assignment" "pipeline_environment_contributor" {
   for_each = var.pipeline_principal_ids
 
-  scope                = local.environment_resource_group_ids[each.key]
+  scope                = local.environment_resource_groups[each.key].id
   role_definition_name = "Contributor"
   principal_id         = each.value
   principal_type       = "ServicePrincipal"
@@ -142,6 +145,10 @@ resource "azurerm_container_registry" "cr_shared" {
       condition     = contains(var.environments, local.image_build_environment)
       error_message = "local.image_build_environment must name an entry in var.environments."
     }
+    precondition {
+      condition     = alltrue([for env in local.deployment_environments : contains(var.environments, env)])
+      error_message = "Every entry in local.deployment_environments must name an entry in var.environments."
+    }
   }
 }
 
@@ -151,5 +158,27 @@ resource "azurerm_role_assignment" "acr_push" {
   scope                = azurerm_container_registry.cr_shared.id
   role_definition_name = "AcrPush"
   principal_id         = each.value
+  principal_type       = "ServicePrincipal"
+}
+
+# ----------------------
+# IDENTITY
+# ----------------------
+
+resource "azurerm_user_assigned_identity" "container_app" {
+  for_each = toset(local.deployment_environments)
+
+  name                = "id-${var.project_app_service}-${each.key}-${var.location_short}-01"
+  resource_group_name = local.environment_resource_groups[each.key].name
+  location            = local.environment_resource_groups[each.key].location
+  tags                = merge(local.common_tags, { environment = each.key })
+}
+
+resource "azurerm_role_assignment" "acr_pull" {
+  for_each = azurerm_user_assigned_identity.container_app
+
+  scope                = azurerm_container_registry.cr_shared.id
+  role_definition_name = "AcrPull"
+  principal_id         = each.value.principal_id
   principal_type       = "ServicePrincipal"
 }
