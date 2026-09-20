@@ -12,6 +12,10 @@ in the repository intended to be run by hand — every other module runs in the 
 - Per-environment role assignments for the Azure Pipelines service principals:
   Contributor on the environment's resource group, and data-plane access to that
   environment's state container only
+- Container registry, shared by every environment
+- A user-assigned managed identity for each environment that runs the container
+- Registry grants: `AcrPush` for the environment that builds images, and `AcrPull` for
+  each environment's managed identity
 
 ## Why it runs by hand
 
@@ -25,11 +29,59 @@ More importantly, creating role assignments requires permission to write them. K
 that privilege in a module a human runs means the pipeline identities never need it —
 they get Contributor on a single resource group and nothing else.
 
+## Registry access
+
+The registry has the admin account and anonymous pull both disabled, so every client
+authenticates as an Entra principal. Two kinds of principal reach it, and they are
+granted differently.
+
+The pipeline identity of the environment that builds images holds `AcrPush`, which is two
+actions — pull and push. Other environments promote a tag that already exists and get no
+push grant at all. That environment is `local.image_build_environment`.
+
+Every environment that runs the container gets a user-assigned managed identity holding
+`AcrPull`, which is one action. Those environments are `local.deployment_environments`;
+prod joins the list when its environment is built.
+
+## Why the pull identity is created here
+
+Contributor excludes `Microsoft.Authorization/*/Write`, so a pipeline identity cannot
+create a role assignment anywhere — not even in the resource group it otherwise controls.
+The `AcrPull` grant has to come from a run that may write assignments, which is this one.
+
+The identity is user-assigned rather than system-assigned because a system-assigned
+principal does not exist until the Container App does. The first apply would create an app
+that could not pull its own image, and the principal ID would change every time the app was
+recreated.
+
+It lives in the environment's own resource group so that the pipeline's existing
+Contributor covers `userAssignedIdentities/assign/action` — without that the pipeline could
+not attach the identity to anything. Placing it in the shared resource group would stop the
+pipeline deleting it, but only by granting the pipeline `Managed Identity Operator`, which
+trades one risk for a new role.
+
+Environment modules find the identity with a data source rather than by reading this
+module's state. A pipeline identity has data access to its own state container and no
+other, so `terraform_remote_state` against this module fails in the pipeline.
+
+**Rejected: `Role Based Access Control Administrator` on the environment resource group.**
+It would let the pipeline create the grant itself and remove a manual step. It would also
+let a compromised pipeline hand permissions to any principal it chose. An ABAC condition
+limiting it to `AcrPull` narrows that without removing it. One assignment made by hand,
+once, is smaller.
+
+**Rejected: a repository-scoped registry token, or the admin account.** Both are passwords.
+Either would have to be stored and rotated somewhere, which is precisely what workload
+identity federation exists to avoid.
+
 ## Prerequisites
 
 - Azure CLI, signed in (`az login`) to the correct subscription
 - Owner or RBAC Administrator on the subscription — Contributor cannot create role
   assignments
+- `Microsoft.ManagedIdentity` registered on the subscription
+  (`az provider register --namespace Microsoft.ManagedIdentity --wait`) — registration is
+  subscription-scoped, so a pipeline identity cannot do it
 - Terraform >= 1.16
 - `terraform.tfvars`, copied from `terraform.tfvars.example` and filled in
 
