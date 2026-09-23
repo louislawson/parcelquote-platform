@@ -6,13 +6,14 @@ trigger:
   branches:
     include: [main]
   paths:
-    include: [app, .azuredevops]
+    include: [app, infra, .azuredevops]
+    exclude: [infra/bootstrap]
 
 pr:
   branches:
     include: [main]
   paths:
-    include: [app, .azuredevops]
+    include: [app, infra, .azuredevops]
 
 pool:
   vmImage: ubuntu-24.04
@@ -33,7 +34,24 @@ stages:
               set -euo pipefail
               docker buildx build --target runtime app
             displayName: "Build runtime target"
+      - job: TerraformChecks
+        displayName: "Format, validate and lint Terraform"
+        steps:
+          - template: templates/install-terraform-tools.yml
+          - script: |
+              set -euo pipefail
+              terraform fmt -check -diff -recursive infra
+            displayName: "Check formatting across infra"
 
+          - script: |
+              set -euo pipefail
+              for dir in infra/bootstrap infra/envs/dev; do
+                echo "--- $dir"
+                terraform -chdir="$dir" init -backend=false -input=false
+                terraform -chdir="$dir" validate
+                tflint --chdir="$dir"
+              done
+            displayName: "Validate and lint each module"
   - stage: Publish
     displayName: "Publish image"
     condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
@@ -58,3 +76,71 @@ stages:
                   --cache-from "type=registry,ref=$LOGIN_SERVER/parcelquote:buildcache" \
                   --cache-to "type=registry,ref=$LOGIN_SERVER/parcelquote:buildcache,mode=max" \
                   --push app
+  - stage: DeployDev
+    displayName: "Deploy to dev"
+    dependsOn: Publish
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    lockBehavior: runLatest
+    jobs:
+      - deployment: Dev
+        displayName: "Container app"
+        environment: dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - template: templates/install-terraform-tools.yml
+                - task: AzureCLI@2
+                  displayName: "Plan and apply the dev environment"
+                  env:
+                    ARM_OIDC_REQUEST_TOKEN: $(System.AccessToken)
+                    TF_VAR_owner: $(OWNER)
+                  inputs:
+                    azureSubscription: "azure-parcelquote-dev"
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      export ARM_CLIENT_ID="$AZURESUBSCRIPTION_CLIENT_ID"
+                      export ARM_TENANT_ID="$AZURESUBSCRIPTION_TENANT_ID"
+                      export ARM_ADO_PIPELINE_SERVICE_CONNECTION_ID="$AZURESUBSCRIPTION_SERVICE_CONNECTION_ID"
+                      export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+                      export ARM_USE_OIDC=true
+                      export ARM_USE_CLI=false
+                      TAG="${BUILD_SOURCEVERSION:0:7}"
+                      terraform -chdir=infra/envs/dev init -input=false
+                      terraform -chdir=infra/envs/dev plan -input=false -lock-timeout=5m \
+                        -var-file=dev.tfvars -var "image_tag=$TAG" -out=tfplan
+                      terraform -chdir=infra/envs/dev show -no-color tfplan > "$BUILD_ARTIFACTSTAGINGDIRECTORY/plan.txt"
+                      terraform -chdir=infra/envs/dev apply -input=false -lock-timeout=5m tfplan
+                      FQDN="$(terraform -chdir=infra/envs/dev output -raw latest_revision_fqdn)"
+                      echo "##vso[task.setvariable variable=REVISION_FQDN]$FQDN"
+                - task: PublishPipelineArtifact@1
+                  displayName: "Publish the plan for review"
+                  condition: succeededOrFailed()
+                  inputs:
+                    targetPath: "$(Build.ArtifactStagingDirectory)"
+                    artifact: "terraform-plan"
+                    publishLocation: "pipeline"
+                - script: |
+                    set -euo pipefail
+                    : "${REVISION_FQDN:?not set — the apply step's setvariable did not run}"
+
+                    TAG="${BUILD_SOURCEVERSION:0:7}"
+                    BASE="https://${REVISION_FQDN}"
+                    RETRY=(--retry 10 --retry-all-errors --retry-delay 5 --max-time 20)
+
+                    echo "Smoke testing $BASE, expecting $TAG"
+
+                    echo "healthz: $(curl -fsS "${RETRY[@]}" "$BASE/healthz")"
+
+                    version="$(curl -fsS "${RETRY[@]}" "$BASE/version")"
+                    sha="$(printf '%s' "$version" | jq -r '.git_sha')"
+                    if [ "$sha" != "$TAG" ]; then
+                      echo "##vso[task.logissue type=error]/version returned git_sha=$sha, expected $TAG"
+                      exit 1
+                    fi
+
+                    echo "Revision $REVISION_FQDN is serving $TAG"
+                  displayName: "Smoke test the new revision"

@@ -45,6 +45,10 @@ crash.*.log
 *.tfvars
 *.tfvars.json
 
+# Non-secret per-environment configuration, deliberately committed so the pipeline
+# and a local run share one source of truth. Secrets stay out by the rule above.
+!infra/envs/dev/dev.tfvars
+
 # Ignore override files as they are usually used to override resources locally and so
 # are not checked in
 override.tf

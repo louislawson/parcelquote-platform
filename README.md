@@ -43,17 +43,17 @@ Work in progress. Built in phases, each independently functional.
 
 - [x] **Phase 0** — Repository, Azure DevOps project, federated identity, Terraform remote state
 - [x] **Phase 1** — Application, tests, Dockerfile, CI to Container Registry
-- [ ] **Phase 2** — Terraform modules, dev environment, continuous deployment
+- [ ] **Phase 2** — Dev environment provisioned with Terraform, continuous deployment
 - [ ] **Phase 3** — Code quality and security gates
 - [ ] **Phase 4** — Key Vault and managed identity
 - [ ] **Phase 5** — Monitoring, alerting and availability tests
-- [ ] **Phase 6** — Production environment, blue/green and canary releases
+- [ ] **Phase 6** — Production environment, shared Terraform module, blue/green and canary releases
 - [ ] **Phase 7** — Architecture documentation and decision records
 
 ## Repository layout
 
     .azuredevops/  Azure Pipelines definitions
-    infra/         Terraform — bootstrap, and per-environment modules from phase 2
+    infra/         Terraform — bootstrap, and one configuration per environment from phase 2
     app/           FastAPI service, tests and Dockerfile
 
 ## Licence

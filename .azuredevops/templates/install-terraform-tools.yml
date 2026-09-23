@@ -1,0 +1,71 @@
+parameters:
+  - name: terraformBaseUrl
+    type: string
+    default: "https://releases.hashicorp.com/terraform"
+  - name: terraformVersion
+    type: string
+    default: "1.16.2"
+  - name: terraformSha256
+    type: string
+    default: "0d17011f0c4664539b164b044903d04e296c86c13cb9f28040076c65cfb3985a"
+    # To update terraform you must update terraformVersion and terraformSha256 together
+    # Get the updated SHA256:
+    #   VERSION="1.17.0"
+    #   curl -fsSL https://releases.hashicorp.com/terraform/${VERSION}/terraform_${VERSION}_SHA256SUMS | grep linux_amd64
+  - name: hashicorpKeyFingerprint
+    type: string
+    default: "C874011F0AB405110D02105534365D9472D7468F"
+  - name: tflintBaseUrl
+    type: string
+    default: "https://github.com/terraform-linters/tflint/releases"
+  - name: tflintVersion
+    type: string
+    default: "v0.64.0"
+  - name: tflintSha256
+    type: string
+    default: "cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537"
+    # To upgrade tflint version you must update tflintVersion and tflintSha256 together
+    # Get the updated SHA256:
+    #   VERSION="v0.65.0"
+    #   curl -fsSL https://github.com/terraform-linters/tflint/releases/download/${VERSION}/checksums.txt | grep linux_amd64
+
+steps:
+  - script: |
+      set -euo pipefail
+      cd /tmp
+      # Download files
+      curl -fsSLO "${{ parameters.terraformBaseUrl }}/${{ parameters.terraformVersion }}/terraform_${{ parameters.terraformVersion }}_linux_amd64.zip"
+      curl -fsSLO "${{ parameters.terraformBaseUrl }}/${{ parameters.terraformVersion }}/terraform_${{ parameters.terraformVersion }}_SHA256SUMS"
+      curl -fsSLO "${{ parameters.terraformBaseUrl }}/${{ parameters.terraformVersion }}/terraform_${{ parameters.terraformVersion }}_SHA256SUMS.sig"
+      # Import GPG key and verify signature
+      curl -fsSL -o hashicorp.asc https://www.hashicorp.com/.well-known/pgp-key.txt
+      gpg --show-keys --with-colons hashicorp.asc \
+        | grep -q "^fpr:::::::::${{ parameters.hashicorpKeyFingerprint }}:" \
+        || { echo "unexpected HashiCorp signing key"; exit 1; }
+      gpg --import hashicorp.asc
+      gpg --verify --status-fd=1 \
+        "terraform_${{ parameters.terraformVersion }}_SHA256SUMS.sig" \
+        "terraform_${{ parameters.terraformVersion }}_SHA256SUMS" \
+        | grep -q "^\[GNUPG:\] VALIDSIG .* ${{ parameters.hashicorpKeyFingerprint }}$" \
+        || { echo "SHA256SUMS not signed by the pinned HashiCorp key"; exit 1; }
+      # Verify checksum
+      sha256sum -c "terraform_${{ parameters.terraformVersion }}_SHA256SUMS" --ignore-missing
+      echo "${{ parameters.terraformSha256 }}  terraform_${{ parameters.terraformVersion }}_linux_amd64.zip" | sha256sum -c -
+      # Install
+      unzip -o "terraform_${{ parameters.terraformVersion }}_linux_amd64.zip"
+      sudo mv terraform /usr/local/bin/
+    displayName: "Verify and install Terraform ${{ parameters.terraformVersion }}"
+  - script: |
+      set -euo pipefail
+      cd /tmp
+      # Download files
+      curl -fsSLO "${{ parameters.tflintBaseUrl }}/download/${{ parameters.tflintVersion }}/tflint_linux_amd64.zip"
+      curl -fsSLO "${{ parameters.tflintBaseUrl }}/download/${{ parameters.tflintVersion }}/checksums.txt"
+      # tflint publishes no PGP signature, so the hash is the only check available.
+      # Verify checksum
+      sha256sum -c "checksums.txt" --ignore-missing
+      echo "${{ parameters.tflintSha256 }}  tflint_linux_amd64.zip" | sha256sum -c -
+      # Install
+      unzip -o "tflint_linux_amd64.zip"
+      sudo mv tflint /usr/local/bin/
+    displayName: "Verify and install tflint ${{ parameters.tflintVersion }}"
