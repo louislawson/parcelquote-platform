@@ -64,7 +64,8 @@ one.
 
 ## Prerequisites
 
-- Azure CLI, signed in to the correct subscription
+- Azure CLI, signed in. The provider takes its subscription from `ARM_SUBSCRIPTION_ID` if
+  set, otherwise from the CLI's default subscription, so check `az account show` first
 - Contributor on the dev resource group and data access to the `tfstate-dev` container
 - Bootstrap applied, so the resource group, identity and registry exist
 - An image tag that exists in the registry
@@ -75,7 +76,7 @@ one.
     terraform init
     terraform fmt
     terraform validate
-    terraform plan "-out=dev.tfplan"
+    terraform plan -var-file=dev.tfvars "-out=dev.tfplan"
     terraform apply dev.tfplan
 
 Quote `"-out=..."` in PowerShell, for the same reason as the bootstrap module.
@@ -85,7 +86,6 @@ Quote `"-out=..."` in PowerShell, for the same reason as the bootstrap module.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| az\_subscription\_id | Subscription all resources are created in. Supplied as a variable rather than hardcoded so the identifier stays out of the repository. | `string` | n/a | yes |
 | environment | Environment name, used in every resource name and the environment tag. The backend block names its state container separately, so changing this alone does not repoint state. | `string` | `"dev"` | no |
 | image\_repository | Repository holding the image, without the registry host or a tag. | `string` | n/a | yes |
 | image\_tag | Tag to run, normally the short commit SHA the pipeline built. The only input that changes between deployments, and changing it creates a new revision. | `string` | n/a | yes |

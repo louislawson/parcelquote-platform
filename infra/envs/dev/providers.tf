@@ -18,6 +18,7 @@ terraform {
 }
 
 provider "azurerm" {
-  subscription_id = var.az_subscription_id
+  # Subscription comes from ARM_SUBSCRIPTION_ID, which the pipeline sets from its
+  # service connection, or otherwise from the Azure CLI's default subscription.
   features {}
 }

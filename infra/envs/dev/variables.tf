@@ -19,11 +19,6 @@ variable "project_app_service" {
   description = "Workload name used in every resource name and the workload tag. Must match the value bootstrap was applied with."
 }
 
-variable "az_subscription_id" {
-  type        = string
-  description = "Subscription all resources are created in. Supplied as a variable rather than hardcoded so the identifier stays out of the repository."
-}
-
 variable "owner" {
   type        = string
   description = "Email address of the person accountable for these resources, applied as the owner tag. This is who to contact before deleting anything."
