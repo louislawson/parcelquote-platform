@@ -68,18 +68,28 @@ one.
   set, otherwise from the CLI's default subscription, so check `az account show` first
 - Contributor on the dev resource group and data access to the `tfstate-dev` container
 - Bootstrap applied, so the resource group, identity and registry exist
-- An image tag that exists in the registry
 - `terraform.tfvars`, copied from `terraform.tfvars.example` and filled in
 
 ## Running it
 
+`image_tag` is an output of a build rather than a setting, so it is not kept in
+`terraform.tfvars`. The pipeline passes the commit SHA it just published. A local run
+should pass back whatever is already deployed, so the plan shows only the change being
+made rather than an image rollback:
+
+    TAG=$(az containerapp show -n ca-parcelquote-dev-uks-01 -g rg-parcelquote-dev-uks-01       --query "properties.template.containers[0].image" -o tsv | cut -d: -f2)
+
     terraform init
     terraform fmt
     terraform validate
-    terraform plan -var-file=dev.tfvars "-out=dev.tfplan"
+    terraform plan -var-file=dev.tfvars -var "image_tag=$TAG" "-out=dev.tfplan"
     terraform apply dev.tfplan
 
 Quote `"-out=..."` in PowerShell, for the same reason as the bootstrap module.
+
+Applying from a laptop should be rare. The pipeline owns this environment; local runs are
+for planning a change before pushing it, for state operations such as imports and moves,
+and for recovering when a pipeline run has failed partway through an apply.
 
 <!-- BEGIN_TF_DOCS -->
 ## Inputs
