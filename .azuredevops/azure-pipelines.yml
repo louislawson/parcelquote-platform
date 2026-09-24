@@ -114,8 +114,8 @@ stages:
                         -var-file=dev.tfvars -var "image_tag=$TAG" -out=tfplan
                       terraform -chdir=infra/envs/dev show -no-color tfplan > "$BUILD_ARTIFACTSTAGINGDIRECTORY/plan.txt"
                       terraform -chdir=infra/envs/dev apply -input=false -lock-timeout=5m tfplan
-                      FQDN="$(terraform -chdir=infra/envs/dev output -raw latest_revision_fqdn)"
-                      echo "##vso[task.setvariable variable=REVISION_FQDN]$FQDN"
+                      FQDN="$(terraform -chdir=infra/envs/dev output -raw app_fqdn)"
+                      echo "##vso[task.setvariable variable=APP_FQDN]$FQDN"
                 - task: PublishPipelineArtifact@1
                   displayName: "Publish the plan for review"
                   condition: succeededOrFailed()
@@ -125,25 +125,33 @@ stages:
                     publishLocation: "pipeline"
                 - script: |
                     set -euo pipefail
-                    if [ -z "${REVISION_FQDN:-}" ]; then
-                      echo "##vso[task.logissue type=error]REVISION_FQDN is empty - the apply step did not set it"
+                    if [ -z "${APP_FQDN:-}" ]; then
+                      echo "##vso[task.logissue type=error]APP_FQDN is empty - the apply step did not set it"
                       exit 1
                     fi
 
                     TAG="${BUILD_SOURCEVERSION:0:7}"
-                    BASE="https://${REVISION_FQDN}"
+                    BASE="https://${APP_FQDN}"
                     RETRY=(--retry 10 --retry-all-errors --retry-delay 5 --max-time 20)
 
                     echo "Smoke testing $BASE, expecting $TAG"
 
                     echo "healthz: $(curl -fsS "${RETRY[@]}" "$BASE/healthz")"
 
-                    version="$(curl -fsS "${RETRY[@]}" "$BASE/version")"
-                    sha="$(printf '%s' "$version" | jq -r '.git_sha')"
+                    # Traffic reaches the new revision a moment after apply returns, so
+                    # poll rather than asserting once.
+                    sha=""
+                    for attempt in $(seq 1 12); do
+                      sha="$(curl -fsS --max-time 15 "$BASE/version" | jq -r '.git_sha' || true)"
+                      [ "$sha" = "$TAG" ] && break
+                      echo "attempt $attempt: git_sha=${sha:-<no response>}"
+                      sleep 5
+                    done
+
                     if [ "$sha" != "$TAG" ]; then
                       echo "##vso[task.logissue type=error]/version returned git_sha=$sha, expected $TAG"
                       exit 1
                     fi
 
-                    echo "Revision $REVISION_FQDN is serving $TAG"
+                    echo "$APP_FQDN is serving $TAG"
                   displayName: "Smoke test the new revision"
