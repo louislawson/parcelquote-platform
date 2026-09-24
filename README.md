@@ -14,13 +14,17 @@ applies Terraform to provision infrastructure, then deploys a new Container Apps
 revision and shifts traffic to it incrementally. Authentication to Azure uses workload
 identity federation (OIDC) — there are no stored credentials anywhere in the pipeline.
 
-Phases 0 and 1 are complete: that identity chain is live, Terraform state is remote and
-isolated per environment, and every commit to main is linted, tested and published to the
-registry as an image tagged with its commit SHA. Pull requests run the same checks without
-any access to Azure. Provisioning and deployment arrive with the phases below.
+Phases 0 to 2 are complete: that identity chain is live, Terraform state is remote and
+isolated per environment, and every commit to main is linted, tested, published to the
+registry as an image tagged with its commit SHA, then deployed to a dev environment on
+Container Apps. A smoke test confirms the running revision reports the commit that built
+it. Pull requests run the same checks with no access to Azure. Progressive traffic
+shifting, quality gates and production arrive with the phases below.
 
 See [infra/bootstrap](infra/bootstrap/README.md) for how the foundational resources
-are provisioned and what permissions they require.
+are provisioned and what permissions they require, and
+[infra/envs/dev](infra/envs/dev/README.md) for the dev environment, what it reads from
+bootstrap rather than creating, and the constraints worth knowing before changing it.
 
 ## Stack
 
@@ -43,7 +47,7 @@ Work in progress. Built in phases, each independently functional.
 
 - [x] **Phase 0** — Repository, Azure DevOps project, federated identity, Terraform remote state
 - [x] **Phase 1** — Application, tests, Dockerfile, CI to Container Registry
-- [ ] **Phase 2** — Dev environment provisioned with Terraform, continuous deployment
+- [x] **Phase 2** — Dev environment provisioned with Terraform, continuous deployment
 - [ ] **Phase 3** — Code quality and security gates
 - [ ] **Phase 4** — Key Vault and managed identity
 - [ ] **Phase 5** — Monitoring, alerting and availability tests
