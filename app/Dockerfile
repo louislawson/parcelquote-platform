@@ -81,8 +81,21 @@ RUN --mount=type=cache,target=/root/.cache/pypoetry \
 
 COPY tests ./tests
 
-RUN poetry run ruff check . \
- && poetry run pytest -q
+# Lint at build time: it produces no report worth publishing, and a failure here
+# means no test image is produced at all.
+RUN poetry run ruff check .
+
+RUN mkdir -p /app/reports
+
+# Tests run at container run time, not in a layer, so the reports survive a
+# failure. A RUN that fails exports nothing, which is the one case the reports
+# matter most.
+CMD ["poetry", "run", "pytest", "-q", \
+     "--junitxml=/app/reports/junit.xml", \
+     "--cov=parcelquote", \
+     "--cov-report=xml:/app/reports/coverage.xml", \
+     "--cov-report=term", \
+     "--cov-fail-under=85"]
 
 # ---- runtime -----------------------------------------------------------------
 

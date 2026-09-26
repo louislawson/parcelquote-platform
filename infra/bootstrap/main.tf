@@ -52,6 +52,11 @@ resource "azurerm_resource_group" "rg_prod" {
 # ----------------------
 
 resource "azurerm_storage_account" "st_tfstate" {
+  #checkov:skip=CKV2_AZURE_1:customer-managed keys arrive with Key Vault in phase 4
+  #checkov:skip=CKV2_AZURE_33:a private endpoint needs a VNet; state must stay reachable from hosted agents and laptops
+  #checkov:skip=CKV_AZURE_59:same reason — public network access is what keeps state reachable
+  #checkov:skip=CKV_AZURE_206:LRS is a deliberate cost choice; blob versioning and 7-day retention cover recovery
+  #checkov:skip=CKV_AZURE_33:no queues are used on this account
   name                            = "st${var.project_app_service}tfst${var.location_short}01"
   location                        = azurerm_resource_group.rg_tfstate.location
   resource_group_name             = azurerm_resource_group.rg_tfstate.name
@@ -80,6 +85,7 @@ resource "azurerm_storage_account" "st_tfstate" {
 }
 
 resource "azurerm_storage_container" "tfstate" {
+  #checkov:skip=CKV2_AZURE_21:blob read logging arrives with phase 5's monitoring
   name                  = "tfstate"
   storage_account_id    = azurerm_storage_account.st_tfstate.id
   container_access_type = "private"
@@ -89,6 +95,7 @@ resource "azurerm_storage_container" "tfstate" {
 }
 
 resource "azurerm_storage_container" "environment_state" {
+  #checkov:skip=CKV2_AZURE_21:blob read logging arrives with phase 5's monitoring
   for_each = toset(var.environments)
 
   name                  = "tfstate-${each.key}"
@@ -129,6 +136,17 @@ resource "azurerm_role_assignment" "pipeline_environment_contributor" {
 # ----------------------
 
 resource "azurerm_container_registry" "cr_shared" {
+  # The registry is Basic. Geo-replication, zone redundancy, dedicated data
+  # endpoints, private networking, quarantine, content trust and untagged-manifest
+  # retention are all Premium features, so none of these can be satisfied here.
+  #checkov:skip=CKV_AZURE_139:private networking requires Premium
+  #checkov:skip=CKV_AZURE_163:image scanning happens in the pipeline, not the registry
+  #checkov:skip=CKV_AZURE_164:content trust requires Premium, and is superseded by cosign/Notation
+  #checkov:skip=CKV_AZURE_165:geo-replication requires Premium; this is a single-region project
+  #checkov:skip=CKV_AZURE_166:quarantine requires Premium
+  #checkov:skip=CKV_AZURE_167:untagged-manifest retention requires Premium; buildcache growth is tracked manually
+  #checkov:skip=CKV_AZURE_233:zone redundancy requires Premium
+  #checkov:skip=CKV_AZURE_237:dedicated data endpoints require Premium
   name                          = "cr${var.project_app_service}${var.location_short}01"
   resource_group_name           = azurerm_resource_group.rg_shared.name
   location                      = azurerm_resource_group.rg_shared.location

@@ -27,8 +27,30 @@ stages:
         steps:
           - script: |
               set -euo pipefail
-              docker buildx build --target test app
-            displayName: "Lint and test"
+              docker buildx build --target test -t parcelquote-test:$(Build.BuildId) app
+            displayName: "Lint and build the test image"
+
+          - script: |
+              set -euo pipefail
+              docker run --name pq-test parcelquote-test:$(Build.BuildId) || TEST_EXIT=$?
+              docker cp pq-test:/app/reports/. "$(Build.ArtifactStagingDirectory)"
+              docker rm pq-test
+              exit ${TEST_EXIT:-0}
+            displayName: "Run tests"
+
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            displayName: "Publish test results"
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: "$(Build.ArtifactStagingDirectory)/junit.xml"
+              failTaskOnFailedTests: false
+
+          - task: PublishCodeCoverageResults@2
+            condition: succeededOrFailed()
+            displayName: "Publish coverage"
+            inputs:
+              summaryFileLocation: "$(Build.ArtifactStagingDirectory)/coverage.xml"
 
           - script: |
               set -euo pipefail
@@ -52,6 +74,26 @@ stages:
                 tflint --chdir="$dir"
               done
             displayName: "Validate and lint each module"
+
+          - script: |
+              set -euo pipefail
+              pipx install "checkov==3.3.19"
+              checkov --version
+            displayName: "Install Checkov 3.3.19"
+
+          - script: |
+              set -euo pipefail
+              checkov -d infra --framework terraform --compact \
+                -o cli -o junitxml --output-file-path console,checkov-junit.xml
+            displayName: "Checkov policy checks"
+
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            displayName: "Publish Checkov results"
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: "checkov-junit.xml"
+              testRunTitle: "Checkov"
   - stage: Publish
     displayName: "Publish image"
     condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
