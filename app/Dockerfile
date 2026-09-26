@@ -10,7 +10,7 @@
 # stage drops privileges once its copying is done.
 
 # python:3.12-slim-bookworm — Python 3.12.14, Debian 12, linux/amd64.
-FROM python@sha256:9c47360a2a0355e2da18516d0b1c2126ec22c195d2185e97347c9d98398c5bef AS base
+FROM python@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS base
 
 # PYTHONUNBUFFERED keeps logs flowing rather than sitting in a buffer until the
 # process exits, which matters once App Insights is collecting them.
@@ -101,6 +101,11 @@ ENV GIT_SHA=${GIT_SHA} \
 # it has to land at exactly the /app/.venv it was built at.
 COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 COPY --from=builder --chown=appuser:appuser /app/src /app/src
+
+# pip's vendored libraries were the only Python CVEs in this image, and nothing
+# installs packages at run time. An image without pip is one nothing can add to.
+RUN rm -rf /usr/local/lib/python3.*/site-packages/pip* \
+           /app/.venv/lib/python3.*/site-packages/pip*
 
 USER appuser
 
