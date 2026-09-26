@@ -14,9 +14,13 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest (>=9.1.1,<10.0.0)",
+    "pytest-cov (>=7.0.0,<8.0.0)",
     "httpx (>=0.28.1,<0.29.0)",
     "ruff (>=0.16.6,<0.17.0)",
 ]
+
+[tool.coverage.run]
+relative_files = true
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
