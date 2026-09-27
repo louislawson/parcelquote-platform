@@ -12,7 +12,10 @@ platform around it is the point.
 Azure Pipelines builds and scans the container, pushes it to Azure Container Registry,
 applies Terraform to provision infrastructure, then deploys a new Container Apps
 revision and shifts traffic to it incrementally. Authentication to Azure uses workload
-identity federation (OIDC) — there are no stored credentials anywhere in the pipeline.
+identity federation (OIDC): no Azure credential is stored anywhere, so nothing in the
+provisioning and deployment path can leak one. The third-party quality gates are the
+exception — SonarQube Cloud and Snyk authenticate with expiring API tokens held in Azure
+DevOps service connections, because neither offers federation.
 
 Phases 0 to 2 are complete: that identity chain is live, Terraform state is remote and
 isolated per environment, and every commit to main is linted, tested, published to the

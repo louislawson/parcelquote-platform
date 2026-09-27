@@ -71,7 +71,7 @@ stages:
 
           - script: |
               set -euo pipefail
-              docker buildx build --target runtime app
+              docker buildx build --target runtime -t parcelquote-runtime:$(Build.BuildId) app
             displayName: "Build runtime target"
 
           - task: SonarCloudAnalyze@4
@@ -81,6 +81,32 @@ stages:
             displayName: "Publish quality gate result"
             inputs:
               pollingTimeoutSec: "300"
+
+          - task: SnykSecurityScan@1
+            displayName: "Snyk — dependencies"
+            inputs:
+              serviceConnectionEndpoint: "snyk-parcelquote"
+              organization: "louislawson"
+              testType: "app"
+              testDirectory: "app"
+              targetFile: "pyproject.toml"
+              severityThreshold: "high"
+              additionalArguments: "--fail-on=upgradable"
+              monitorWhen: "never"
+              failOnIssues: true
+
+          - task: SnykSecurityScan@1
+            displayName: "Snyk — container image"
+            inputs:
+              serviceConnectionEndpoint: "snyk-parcelquote"
+              organization: "louislawson"
+              testType: "container"
+              dockerImageName: "parcelquote-runtime:$(Build.BuildId)"
+              dockerfilePath: "app/Dockerfile"
+              severityThreshold: "high"
+              additionalArguments: "--fail-on=upgradable"
+              monitorWhen: "never"
+              failOnIssues: true
       - job: TerraformChecks
         displayName: "Format, validate and lint Terraform"
         steps:
