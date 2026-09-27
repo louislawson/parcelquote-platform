@@ -55,7 +55,6 @@ resource "azurerm_storage_account" "st_tfstate" {
   #checkov:skip=CKV2_AZURE_1:customer-managed keys arrive with Key Vault in phase 4
   #checkov:skip=CKV2_AZURE_33:a private endpoint needs a VNet; state must stay reachable from hosted agents and laptops
   #checkov:skip=CKV_AZURE_59:same reason — public network access is what keeps state reachable
-  #checkov:skip=CKV_AZURE_206:LRS is a deliberate cost choice; blob versioning and 7-day retention cover recovery
   #checkov:skip=CKV_AZURE_33:no queues are used on this account
   name                            = "st${var.project_app_service}tfst${var.location_short}01"
   location                        = azurerm_resource_group.rg_tfstate.location
