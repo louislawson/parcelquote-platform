@@ -25,6 +25,23 @@ stages:
       - job: LintTestBuild
         displayName: "Lint, test and build"
         steps:
+          - checkout: self
+            fetchDepth: 0
+          - task: SonarCloudPrepare@4
+            displayName: "Prepare Sonar analysis"
+            inputs:
+              SonarQube: "sonarcloud-parcelquote"
+              organization: "louislawson"
+              scannerMode: "cli"
+              configMode: "manual"
+              cliProjectKey: "louislawson_parcelquote-platform"
+              cliSources: "src"
+              extraProperties: |
+                sonar.projectBaseDir=app
+                sonar.tests=tests
+                sonar.python.version=3.12
+                sonar.python.coverage.reportPaths=$(Build.ArtifactStagingDirectory)/coverage.xml
+                sonar.qualitygate.wait=true
           - script: |
               set -euo pipefail
               docker buildx build --target test -t parcelquote-test:$(Build.BuildId) app
@@ -56,6 +73,14 @@ stages:
               set -euo pipefail
               docker buildx build --target runtime app
             displayName: "Build runtime target"
+
+          - task: SonarCloudAnalyze@4
+            displayName: "Run Sonar analysis"
+
+          - task: SonarCloudPublish@4
+            displayName: "Publish quality gate result"
+            inputs:
+              pollingTimeoutSec: "300"
       - job: TerraformChecks
         displayName: "Format, validate and lint Terraform"
         steps:
