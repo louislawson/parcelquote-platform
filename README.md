@@ -17,17 +17,27 @@ provisioning and deployment path can leak one. The third-party quality gates are
 exception — SonarQube Cloud and Snyk authenticate with expiring API tokens held in Azure
 DevOps service connections, because neither offers federation.
 
-Phases 0 to 2 are complete: that identity chain is live, Terraform state is remote and
+Phases 0 to 3 are complete: that identity chain is live, Terraform state is remote and
 isolated per environment, and every commit to main is linted, tested, published to the
 registry as an image tagged with its commit SHA, then deployed to a dev environment on
 Container Apps. A smoke test confirms the running revision reports the commit that built
-it. Pull requests run the same checks with no access to Azure. Progressive traffic
-shifting, quality gates and production arrive with the phases below.
+it. Pull requests run the same checks with no access to Azure.
+
+Every commit also passes through gates that can stop it. Test results and coverage are
+published to the run summary, a SonarCloud quality gate blocks on its conditions, Checkov
+checks the Terraform, and Snyk tests the dependency tree and the built image before either
+can reach the registry. Each gate has been watched failing as well as passing: a pinned
+vulnerable dependency and a removed policy suppression both stop the build, which is the
+difference between a gate that is trusted and one that is known to work.
+
+Progressive traffic shifting, production and observability arrive with the phases below.
 
 See [infra/bootstrap](infra/bootstrap/README.md) for how the foundational resources
-are provisioned and what permissions they require, and
+are provisioned and what permissions they require,
 [infra/envs/dev](infra/envs/dev/README.md) for the dev environment, what it reads from
-bootstrap rather than creating, and the constraints worth knowing before changing it.
+bootstrap rather than creating, and the constraints worth knowing before changing it, and
+[.azuredevops](.azuredevops/README.md) for the pipeline and the configuration it depends
+on that lives in Azure DevOps rather than here.
 
 ## Stack
 
@@ -51,7 +61,7 @@ Work in progress. Built in phases, each independently functional.
 - [x] **Phase 0** — Repository, Azure DevOps project, federated identity, Terraform remote state
 - [x] **Phase 1** — Application, tests, Dockerfile, CI to Container Registry
 - [x] **Phase 2** — Dev environment provisioned with Terraform, continuous deployment
-- [ ] **Phase 3** — Code quality and security gates
+- [x] **Phase 3** — Code quality and security gates
 - [ ] **Phase 4** — Key Vault and managed identity
 - [ ] **Phase 5** — Monitoring, alerting and availability tests
 - [ ] **Phase 6** — Production environment, shared Terraform module, blue/green and canary releases
