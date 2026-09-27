@@ -27,7 +27,7 @@ Azure credential in this repository or in the pipeline.
 
 ## Configuration that is not in this repository
 
-Four things the pipeline depends on that no file here declares. Recreating this pipeline
+Six things the pipeline depends on that no file here declares. Recreating this pipeline
 in a fresh Azure DevOps project means recreating them by hand.
 
 ### The Azure service connection
@@ -42,6 +42,29 @@ The deploy step reads `AZURESUBSCRIPTION_CLIENT_ID`, `AZURESUBSCRIPTION_TENANT_I
 as `ARM_*` values, so Terraform mints its own tokens rather than riding the CLI session.
 `ARM_USE_CLI=false` is the guard: without it, an incomplete OIDC configuration silently
 falls back to the CLI login and the run passes while proving nothing.
+
+### The quality gate service connections
+
+Two connections carry the SaaS gates, and unlike the Azure one they hold real secrets.
+
+| Connection | Gate | Credential | Expires |
+| --- | --- | --- | --- |
+| `sonarcloud-parcelquote` | SonarQube Cloud analysis and quality gate | Personal access token | **2026-12-25** |
+| `snyk-parcelquote` | Snyk dependency and container scanning | Personal access token | **2026-12-26** |
+
+Both are personal tokens belonging to an organisation owner, because project-scoped
+alternatives are paid features on both platforms — SonarQube Cloud's Scoped Organization
+Tokens need the Team plan, and Snyk's service accounts are likewise not on the free tier.
+A leaked token would therefore grant whatever that account can do in its organisation.
+
+What bounds that: the tokens live only in the service connections, never in the
+repository; fork pull requests receive no secrets, and do not build at all; and either can
+be revoked immediately, from **My account → Access tokens** in SonarQube Cloud or
+**Account settings → Auth tokens** in Snyk.
+
+**The expiry dates above are load-bearing.** Nothing warns the pipeline that a token is
+about to lapse, and when one does the affected step fails with an authentication error
+rather than anything that points here. Renew both and update this table.
 
 ### The `dev` environment
 
@@ -119,3 +142,8 @@ It can be seen through the REST API, on the build definition under `triggers`.
 4. Run it once; authorize the service connection at the prompt
 5. Add the Exclusive Lock check to the `dev` environment that the first run created
 6. Confirm fork builds are disabled in **Project settings → Pipelines → Settings**
+7. Install the **SonarQube Cloud** and **Snyk Security Scan** extensions in the
+   organization, then create the `sonarcloud-parcelquote` and `snyk-parcelquote` service
+   connections and record their expiry dates above
+8. In SonarQube Cloud, switch **Administration → Analysis Method → Automatic Analysis**
+   off, or CI analysis is ignored and coverage never appears
