@@ -89,7 +89,7 @@ stages:
               organization: "louislawson"
               testType: "app"
               testDirectory: "app"
-              targetFile: "pyproject.toml"
+              targetFile: "poetry.lock"
               severityThreshold: "high"
               additionalArguments: "--fail-on=upgradable"
               monitorWhen: "never"
