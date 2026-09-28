@@ -42,3 +42,8 @@ output "container_registry_login_server" {
   description = "Fully qualified registry host, such as crparcelquoteuks01.azurecr.io. Prefix image tags with it; known only once the registry exists."
   value       = azurerm_container_registry.cr_shared.login_server
 }
+
+output "environment_key_vaults" {
+  description = "The vault name per environment. Its secrets are readable by the environment's container app identity and, in dev, by the operator who sets them; the pipeline identity cannot read them at all."
+  value       = { for env, key_vault in azurerm_key_vault.environment_key_vault : env => key_vault.name }
+}
