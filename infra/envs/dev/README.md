@@ -14,7 +14,7 @@ and uses your own identity rather than the pipeline's.
 
 ## What it only reads
 
-Three things belong to the bootstrap module and are looked up here rather than created:
+Four things belong to the bootstrap module and are looked up here rather than created:
 
 - `rg-parcelquote-dev-uks-01`, the resource group everything lands in. The pipeline
   identity holds Contributor here and nowhere else, and could not create a resource
@@ -24,6 +24,10 @@ Three things belong to the bootstrap module and are looked up here rather than c
   create role assignments.
 - The container registry, addressed by login server rather than by resource. Nothing
   here needs its resource ID.
+- `kv-parcelquote-dev-uks`, the vault holding the application's secrets. Only its URI is
+  read — the value is never fetched here, so nothing about the secret reaches state. The
+  container app's identity holds `Key Vault Secrets User` on it, granted by bootstrap for
+  the same reason as `AcrPull`.
 
 They are found with data sources rather than `terraform_remote_state`. A pipeline
 identity has data access to the `tfstate-dev` container and no other, so bootstrap's own
@@ -67,7 +71,9 @@ one.
 - Azure CLI, signed in. The provider takes its subscription from `ARM_SUBSCRIPTION_ID` if
   set, otherwise from the CLI's default subscription, so check `az account show` first
 - Contributor on the dev resource group and data access to the `tfstate-dev` container
-- Bootstrap applied, so the resource group, identity and registry exist
+- Bootstrap applied, so the resource group, identity, registry and vault exist
+- The `quote-api-key` secret present in the vault. Bootstrap creates the vault and the
+  grants but not the value, which is set by hand
 - `terraform.tfvars`, copied from `terraform.tfvars.example` and filled in
 
 ## Running it
@@ -122,6 +128,13 @@ one impatient `curl` looks exactly like a failed deployment.
 **Registry authentication needs both blocks.** `identity` attaches the managed identity
 to the app; `registry.identity` tells the app to authenticate with it. Supplying only
 the second is accepted by Terraform and fails when the revision tries to pull.
+
+**A secret reference is invisible in the plan.** Terraform marks the whole `secret` block
+sensitive, because `value` is a sensitive attribute in the schema even when unused. So
+`key_vault_secret_id` never appears in plan output, nor in the `plan.txt` the pipeline
+publishes for review, and a wrong secret name looks exactly like a right one. It fails at
+revision creation instead, with an error that reads like a permissions problem. Check the
+revision after a deploy rather than trusting the plan.
 
 **The workspace keeps local authentication enabled, and has to.** Container Apps sends
 logs to Log Analytics with the workspace's shared key: the provider reads the primary
