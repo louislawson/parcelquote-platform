@@ -16,6 +16,11 @@ data "azurerm_user_assigned_identity" "container_app" {
   name                = "id-${var.project_app_service}-${var.environment}-${var.location_short}-01"
 }
 
+data "azurerm_key_vault" "kv_dev" {
+  name                = "kv-${var.project_app_service}-${var.environment}-${var.location_short}"
+  resource_group_name = data.azurerm_resource_group.rg_dev.name
+}
+
 resource "azurerm_log_analytics_workspace" "log_dev" {
   name                = "log-${var.project_app_service}-${var.environment}-${var.location_short}-01"
   location            = data.azurerm_resource_group.rg_dev.location
@@ -62,6 +67,17 @@ resource "azurerm_container_app" "ca_dev" {
     identity = data.azurerm_user_assigned_identity.container_app.id
   }
 
+  # A Key Vault reference, not a value. Container Apps resolves it with the managed
+  # identity, so the secret never passes through Terraform and lands in neither state
+  # nor a plan file; replacing this with `value = ...` would put it in both. The id is
+  # versionless and vault_uri already ends in a slash, so rotation needs no change
+  # here — but it only takes effect on the next revision.
+  secret {
+    name                = "quote-api-key"
+    identity            = data.azurerm_user_assigned_identity.container_app.id
+    key_vault_secret_id = "${data.azurerm_key_vault.kv_dev.vault_uri}secrets/quote-api-key"
+  }
+
   ingress {
     external_enabled           = true
     target_port                = 8000
@@ -80,6 +96,11 @@ resource "azurerm_container_app" "ca_dev" {
       image  = "${var.registry_login_server}/${var.image_repository}:${var.image_tag}"
       cpu    = 0.25
       memory = "0.5Gi"
+
+      env {
+        name        = "QUOTE_API_KEY"
+        secret_name = "quote-api-key"
+      }
 
       liveness_probe {
         transport               = "HTTP"
