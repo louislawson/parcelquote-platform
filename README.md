@@ -17,7 +17,7 @@ provisioning and deployment path can leak one. The third-party quality gates are
 exception — SonarQube Cloud and Snyk authenticate with expiring API tokens held in Azure
 DevOps service connections, because neither offers federation.
 
-Phases 0 to 3 are complete: that identity chain is live, Terraform state is remote and
+Phases 0 to 4 are complete: that identity chain is live, Terraform state is remote and
 isolated per environment, and every commit to main is linted, tested, published to the
 registry as an image tagged with its commit SHA, then deployed to a dev environment on
 Container Apps. A smoke test confirms the running revision reports the commit that built
@@ -29,6 +29,14 @@ checks the Terraform, and Snyk tests the dependency tree and the built image bef
 can reach the registry. Each gate has been watched failing as well as passing: a pinned
 vulnerable dependency and a removed policy suppression both stop the build, which is the
 difference between a gate that is trusted and one that is known to work.
+
+Phase 4 adds the application's own secret, and where it lives is the point. `POST /quote`
+now requires an API key; before that the service was open to anyone who found its hostname.
+The key is held in Key Vault and resolved into the container by its managed identity, so it
+appears in neither the repository nor Terraform state — Terraform handles the secret's
+identifier and never its value. The pipeline that deploys the application cannot read it,
+because Contributor grants no data-plane access under RBAC authorization and cannot grant
+itself any, and every deploy asserts that rather than assuming it.
 
 Progressive traffic shifting, production and observability arrive with the phases below.
 
@@ -62,7 +70,7 @@ Work in progress. Built in phases, each independently functional.
 - [x] **Phase 1** — Application, tests, Dockerfile, CI to Container Registry
 - [x] **Phase 2** — Dev environment provisioned with Terraform, continuous deployment
 - [x] **Phase 3** — Code quality and security gates
-- [ ] **Phase 4** — Key Vault and managed identity
+- [x] **Phase 4** — Key Vault, managed identity and API authentication
 - [ ] **Phase 5** — Monitoring, alerting and availability tests
 - [ ] **Phase 6** — Production environment, shared Terraform module, blue/green and canary releases
 - [ ] **Phase 7** — Architecture documentation and decision records
