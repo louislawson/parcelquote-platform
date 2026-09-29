@@ -26,8 +26,19 @@ WORKED_EXAMPLE = {
 }
 
 
+API_KEY = "test-key-not-a-real-one"
+
+
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    monkeypatch.setenv("QUOTE_API_KEY", API_KEY)
+    return TestClient(app, headers={"X-API-Key": API_KEY})
+
+
+@pytest.fixture
+def anonymous_client(monkeypatch):
+    """A correctly configured service, and a caller sending no key."""
+    monkeypatch.setenv("QUOTE_API_KEY", API_KEY)
     return TestClient(app)
 
 
@@ -76,6 +87,56 @@ def test_decimal_arrives_from_a_json_float_without_contamination(client):
     )
     assert response.status_code == 200
     assert response.json()["actual_weight_kg"] == "0.1"
+
+
+# --- authentication ----------------------------------------------------------------------
+
+
+def test_quote_without_a_key_is_refused(anonymous_client):
+    assert anonymous_client.post("/quote", json=WORKED_EXAMPLE).status_code == 401
+
+
+def test_quote_with_the_wrong_key_is_refused(anonymous_client):
+    response = anonymous_client.post(
+        "/quote", json=WORKED_EXAMPLE, headers={"X-API-Key": "not-the-key"}
+    )
+    assert response.status_code == 401
+
+
+def test_a_non_ascii_key_is_refused_rather_than_crashing(anonymous_client):
+    """secrets.compare_digest raises TypeError on any str above ASCII.
+
+    Starlette decodes headers as latin-1, so one byte in a header would turn a 401 into a
+    500 for anyone who cared to send it. The comparison encodes both sides to bytes first.
+    Sent as bytes because httpx refuses to encode a non-ASCII str header at all.
+    """
+    response = anonymous_client.post(
+        "/quote", json=WORKED_EXAMPLE, headers={b"X-API-Key": "ké".encode("latin-1")}
+    )
+    assert response.status_code == 401
+
+
+def test_quote_is_unavailable_when_no_key_is_configured(client, monkeypatch):
+    """503, not 401. An unconfigured server is the operator's fault, not the caller's.
+
+    Deleted after the client is built, which only works because the key is read per
+    request — the same property the /version tests pin.
+    """
+    monkeypatch.delenv("QUOTE_API_KEY", raising=False)
+    assert client.post("/quote", json=WORKED_EXAMPLE).status_code == 503
+
+
+def test_an_unconfigured_service_answers_503_whatever_the_caller_sent(
+    anonymous_client, monkeypatch
+):
+    """The same fault has to produce the same answer.
+
+    This is what auto_error=False buys. With FastAPI rejecting a header-less request before
+    the dependency runs, this case would be 401 while the one above stayed 503 — the same
+    broken server blaming the caller or the operator depending on what arrived.
+    """
+    monkeypatch.delenv("QUOTE_API_KEY", raising=False)
+    assert anonymous_client.post("/quote", json=WORKED_EXAMPLE).status_code == 503
 
 
 # --- field validation, handled by the request model --------------------------------------
@@ -162,6 +223,18 @@ def test_probes_report_their_status(client, path, status):
     response = client.get(path)
     assert response.status_code == 200
     assert response.json() == {"status": status}
+
+
+def test_readyz_is_not_ready_without_a_key(client, monkeypatch):
+    """Readiness removes the container from rotation; liveness would restart it.
+
+    With no key configured every call to /quote is refused, so the container has nothing
+    useful to serve and belongs out of rotation until an operator fixes it.
+    """
+    monkeypatch.delenv("QUOTE_API_KEY", raising=False)
+    assert client.get("/readyz").status_code == 503
+    assert client.get("/healthz").status_code == 200
+
 
 
 # --- build identity ----------------------------------------------------------------------
