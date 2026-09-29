@@ -248,3 +248,23 @@ stages:
 
                     echo "$APP_FQDN is serving $TAG"
                   displayName: "Smoke test the new revision"
+                - task: AzureCLI@2
+                  displayName: "Assert the pipeline identity cannot read the secret"
+                  inputs:
+                    azureSubscription: "azure-parcelquote-dev"
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      # Contributor on the resource group is a control-plane role: under RBAC
+                      # authorization it grants no data-plane access to secret values, and it
+                      # cannot create the role assignment that would. This asserts that rather
+                      # than assuming it, so the day someone grants this identity Key Vault
+                      # Secrets User to fix something unrelated, the build says so.
+                      if az keyvault secret show \
+                           --vault-name "kv-parcelquote-dev-uks" \
+                           --name "quote-api-key" -o none 2>/dev/null; then
+                        echo "##vso[task.logissue type=error]the pipeline identity can read quote-api-key; it must not be able to"
+                        exit 1
+                      fi
+                      echo "confirmed: the pipeline identity cannot read the vault's secrets"

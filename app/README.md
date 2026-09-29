@@ -25,15 +25,29 @@ isolation and read without tracing HTTP handlers.
 
 | Method | Path       | Purpose                                                                             |
 | ------ | ---------- | ----------------------------------------------------------------------------------- |
-| POST   | `/quote`   | Price a parcel. Returns the price, the chargeable weight, and which weight was used |
+| POST   | `/quote`   | Price a parcel. Requires an `X-API-Key` header. Returns the price, the chargeable weight, and which weight was used |
 | GET    | `/healthz` | Liveness. Confirms the process is running. Touches nothing external                 |
-| GET    | `/readyz`  | Readiness. Confirms the service can accept traffic                                  |
+| GET    | `/readyz`  | Readiness. Confirms the service can accept traffic, which it cannot without a key    |
 | GET    | `/version` | Build identity — the commit the image was built from                                |
 
 Liveness and readiness are separate endpoints because the runtime treats them differently. A
 failed liveness probe restarts the container; a failed readiness probe only removes it from
 rotation. Collapsing them into one check means a slow dependency gets the process killed rather
 than briefly taken out of service.
+
+`POST /quote` requires an `X-API-Key` header. A missing or wrong key is rejected with `401`.
+A service with no key configured at all answers `503` instead: that is the operator's fault
+rather than the caller's, and the two are worth telling apart. `/readyz` fails at the same
+moment, so a container in that state leaves rotation instead of sitting there refusing
+everything.
+
+The probes and `/version` are unauthenticated deliberately. A liveness check that depended on
+configuration would restart a perfectly healthy process, and the deployment smoke test polls
+`/version` to confirm which commit is serving.
+
+In the dev environment the key is held in Key Vault and resolved into the container by its
+managed identity, so it exists in exactly one place and never passes through Terraform. See
+`infra/envs/dev/README.md`.
 
 Invalid input is rejected by the request model rather than by hand-written checks, so malformed
 requests return `422` with a description of the offending field.
@@ -47,6 +61,7 @@ are kept apart rather than collapsed into one code.
 ```bash
 curl -X POST http://localhost:8000/quote \
   -H 'Content-Type: application/json' \
+  -H "X-API-Key: $QUOTE_API_KEY" \
   -d '{"length_cm": 40, "width_cm": 30, "height_cm": 20, "weight_kg": 2.5, "zone": "uk"}'
 ```
 
@@ -78,6 +93,13 @@ Requires Python 3.12 and [Poetry](https://python-poetry.org/).
 
 ```bash
 poetry install
+```
+
+`/quote` returns `503` and `/readyz` reports not ready until a key is configured. Any value
+will do locally:
+
+```bash
+export QUOTE_API_KEY=local-dev-key
 ```
 
 ```bash

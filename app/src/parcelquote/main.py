@@ -11,10 +11,12 @@ clients, which is precisely what `pricing.py` uses `Decimal` to avoid. It also p
 """
 
 import os
+import secrets
 from decimal import Decimal
-from typing import Final
+from typing import Annotated, Final
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Security, status
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 
 from parcelquote.pricing import Zone
@@ -125,6 +127,50 @@ class Version(BaseModel):
     git_sha: str = Field(title="Git SHA", description="Commit the image was built from")
 
 
+# auto_error is off deliberately. With it on, FastAPI refuses a request carrying no header
+# before this function runs, so a service with no key configured would answer 401 to one
+# caller and 503 to another for the same fault — and the 401 would blame the caller for the
+# server's misconfiguration.
+_api_key_header = APIKeyHeader(
+    name="X-API-Key",
+    description="Key authenticating the caller",
+    auto_error=False,
+    scheme_name="ApiKeyAuth",
+)
+
+
+def require_api_key(supplied: Annotated[str | None, Security(_api_key_header)]) -> None:
+    """Refuse the request unless it carries the configured API key.
+
+    The configured key is read per request rather than at import, for the same reason as
+    `version()`: a module-level read is fixed at first import, long before any test runs.
+
+    Raises:
+        HTTPException: 503 when no key is configured, because the service then cannot serve
+            its only real endpoint and the fault is the operator's; 401 when the supplied
+            key is absent or wrong, which is the caller's.
+    """
+    configured = os.environ.get("QUOTE_API_KEY")
+    if not configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="no API key is configured, so the service cannot accept requests",
+        )
+
+    # Compared as bytes with compare_digest, not with ==. A plain comparison returns early
+    # on the first wrong character, which leaks the key a character at a time to anyone
+    # timing the response; and compare_digest on str raises TypeError for any non-ASCII
+    # character, which a caller could send at will to turn a 401 into a 500.
+    if supplied is None or not secrets.compare_digest(
+        supplied.encode("utf-8"), configured.encode("utf-8")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="a valid X-API-Key header is required",
+            headers={"WWW-Authenticate": "ApiKeyAuth"},
+        )
+
+
 @app.post(
     "/quote",
     response_model=QuoteResponse,
@@ -134,8 +180,20 @@ class Version(BaseModel):
         400: {
             "model": ErrorResponse,
             "description": "The parcel exceeds the maximum chargeable weight",
-        }
+        },
+        401: {
+            "model": ErrorResponse,
+            "description": "The X-API-Key header is missing or does not match",
+        },
+        503: {
+            "model": ErrorResponse,
+            "description": "The service has no API key configured",
+        },
     },
+    # On the decorator rather than in the signature: the handler never needs the key's
+    # value, and a parameter it does not use is how an accidental query parameter gets
+    # published into the schema.
+    dependencies=[Security(require_api_key)],
     operation_id="quote",
 )
 def quote(parcel: Parcel) -> QuoteResponse:
@@ -182,13 +240,37 @@ def healthz() -> Health:
     return Health(status="ok")
 
 
-@app.get("/readyz", response_model=Health, summary="Readiness probe", operation_id="readyz")
+@app.get(
+    "/readyz",
+    response_model=Health,
+    summary="Readiness probe",
+    operation_id="readyz",
+    responses={
+        503: {
+            "model": ErrorResponse,
+            "description": "The service has no API key configured",
+        }
+    },
+)
 def readyz() -> Health:
     """Report whether the service can accept traffic.
 
     Separate from liveness because a failed readiness probe only removes the container from
-    rotation. This is where a dependency check belongs; the service currently has none.
+    rotation rather than restarting it. Without an API key configured every call to `/quote`
+    would be refused, so the container has nothing useful to serve and belongs out of
+    rotation until an operator fixes it — which is exactly what readiness is for, and why
+    this check does not belong on `/healthz`.
+
+    Deliberately not a call to Key Vault. The platform resolves the secret into the
+    environment when the revision starts, so a missing value is a deployment fault that will
+    not heal on its own, and a probe that reached the vault on every call would turn a vault
+    outage into a rolling restart of a service that is running perfectly well.
     """
+    if not os.environ.get("QUOTE_API_KEY"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="no API key is configured, so the service cannot accept requests",
+        )
     return Health(status="ready")
 
 
