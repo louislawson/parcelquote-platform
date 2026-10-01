@@ -95,7 +95,7 @@ resource "azurerm_storage_account" "st_tfstate" {
 }
 
 resource "azurerm_storage_container" "tfstate" {
-  #checkov:skip=CKV2_AZURE_21:blob read logging arrives with phase 5's monitoring
+  #checkov:skip=CKV2_AZURE_21:declined — the only shape this check accepts is azurerm_log_analytics_storage_insights, whose storage_account_key is required, and shared_access_key_enabled is false on this account; satisfying it would mean putting an account key back into state to prove the account is monitored
   name                  = "tfstate"
   storage_account_id    = azurerm_storage_account.st_tfstate.id
   container_access_type = "private"
@@ -105,7 +105,7 @@ resource "azurerm_storage_container" "tfstate" {
 }
 
 resource "azurerm_storage_container" "environment_state" {
-  #checkov:skip=CKV2_AZURE_21:blob read logging arrives with phase 5's monitoring
+  #checkov:skip=CKV2_AZURE_21:declined — the only shape this check accepts is azurerm_log_analytics_storage_insights, whose storage_account_key is required, and shared_access_key_enabled is false on this account; satisfying it would mean putting an account key back into state to prove the account is monitored
   for_each = toset(var.environments)
 
   name                  = "tfstate-${each.key}"

@@ -29,23 +29,40 @@ resource "azurerm_log_analytics_workspace" "log_dev" {
   retention_in_days   = 30
   tags                = merge(local.common_tags, { environment = var.environment })
 
-  # Container Apps ships logs with the workspace's shared key, so this must stay
-  # enabled while logs_destination is "log-analytics". See Gotchas in README.md.
-  local_authentication_enabled = true
+  # Off because the environment ships logs through a diagnostic setting rather than the
+  # shared-key ingestion that logs_destination = "log-analytics" requires. The two are
+  # coupled: reverting that destination forces this back to true and puts a live workspace
+  # key back into Terraform state. See Gotchas in README.md.
+  local_authentication_enabled = false
 }
 
 resource "azurerm_container_app_environment" "cae_env" {
-  name                       = "cae-${var.project_app_service}-${var.environment}-${var.location_short}-01"
-  location                   = data.azurerm_resource_group.rg_dev.location
-  resource_group_name        = data.azurerm_resource_group.rg_dev.name
-  logs_destination           = "log-analytics"
-  log_analytics_workspace_id = azurerm_log_analytics_workspace.log_dev.id
-  tags                       = merge(local.common_tags, { environment = var.environment })
+  name                = "cae-${var.project_app_service}-${var.environment}-${var.location_short}-01"
+  location            = data.azurerm_resource_group.rg_dev.location
+  resource_group_name = data.azurerm_resource_group.rg_dev.name
+  logs_destination    = "azure-monitor"
+  tags                = merge(local.common_tags, { environment = var.environment })
 
   workload_profile {
     name                  = "Consumption"
     workload_profile_type = "Consumption"
   }
+}
+
+resource "azurerm_monitor_diagnostic_setting" "diag_cae_env" {
+  name                       = "diag-${var.project_app_service}-${var.environment}-${var.location_short}-01"
+  target_resource_id         = azurerm_container_app_environment.cae_env.id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.log_dev.id
+  # "Dedicated" is what puts each category in its own table. Without it everything lands in
+  # the legacy AzureDiagnostics table and ContainerAppHTTPLogs — the per-request status and
+  # latency the alerts are built on — never exists as a table at all.
+  log_analytics_destination_type = "Dedicated"
+
+  # Logs only. AllMetrics is offered here, but platform metrics are already queryable
+  # through Azure Monitor without paying Log Analytics ingestion for a second copy.
+  enabled_log { category = "ContainerAppConsoleLogs" }
+  enabled_log { category = "ContainerAppSystemLogs" }
+  enabled_log { category = "ContainerAppHTTPLogs" }
 }
 
 resource "azurerm_container_app" "ca_dev" {

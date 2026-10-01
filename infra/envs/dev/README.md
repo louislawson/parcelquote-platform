@@ -8,8 +8,10 @@ and uses your own identity rather than the pipeline's.
 
 ## What it creates
 
-- Log Analytics workspace, 30-day retention
+- Log Analytics workspace, 30-day retention, Entra-only
 - Container Apps environment with a single Consumption workload profile
+- Diagnostic setting sending the environment's console, system and HTTP logs to that
+  workspace
 - Container app serving the quote API over HTTPS, scaled to zero when idle
 
 ## What it only reads
@@ -136,16 +138,24 @@ publishes for review, and a wrong secret name looks exactly like a right one. It
 revision creation instead, with an error that reads like a permissions problem. Check the
 revision after a deploy rather than trusting the plan.
 
-**The workspace keeps local authentication enabled, and has to.** Container Apps sends
-logs to Log Analytics with the workspace's shared key: the provider reads the primary
-key and writes it into the environment's log configuration. Disabling local
-authentication blocks key-based ingestion without anything reporting it — reading the
-key is a control-plane call authorised by RBAC, so the apply still succeeds, and logs
-simply stop arriving. The same mechanism is why the workspace keys appear in this
-module's state. An Entra-only workspace means switching to
-`logs_destination = "azure-monitor"` with a diagnostic setting that targets this
-workspace, which authenticates through the Azure Monitor control plane instead of the
-key.
+**Local authentication and the log destination are coupled.** The workspace is
+Entra-only, which is only possible because the environment ships logs through a
+diagnostic setting — that route authenticates through the Azure Monitor control plane
+rather than with the workspace's shared key. Reverting `logs_destination` to
+`log-analytics` puts the key back in the path, and so back into this module's state.
+
+The failure in that direction is silent. Under `log-analytics` the provider reads the
+primary key and writes it into the environment's log configuration; reading it is a
+control-plane call authorised by RBAC, so with local authentication off the apply still
+succeeds and logs simply stop arriving, with nothing reporting it. Change the two
+together or not at all.
+
+**Log table names changed with the destination.** `log_analytics_destination_type` is
+`Dedicated`, so each category lands in its own table: `ContainerAppConsoleLogs`,
+`ContainerAppSystemLogs` and `ContainerAppHTTPLogs`. Anything written before the switch
+is still in the `ContainerAppConsoleLogs_CL` and `ContainerAppSystemLogs_CL` custom
+tables, which keep their history and stop growing. A query against a `_CL` table
+therefore does not fail — it returns old rows and looks healthy, which is the trap.
 
 **Probe ports are not checked against the container.** Liveness and readiness point at
 the app's own `/healthz` and `/readyz` on port 8000. A probe aimed at the wrong port

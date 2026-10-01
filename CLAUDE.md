@@ -57,7 +57,10 @@ and the container registry drop the hyphens, and Key Vault drops the `-01` becau
 names cap at 24 characters. Terraform resource labels are snake_case and mirror the
 abbreviation: `rg_dev`, `st_tfstate`, `cr_shared`, `ca_dev`.
 
-**Every resource carries `merge(local.common_tags, { environment = ... })`.**
+**Every taggable resource carries `merge(local.common_tags, { environment = ... })`.** A few
+Azure resources have no `tags` argument in the schema at all —
+`azurerm_monitor_diagnostic_setting` is one — so check the provider docs before treating an
+untagged resource as an omission.
 
 **A grant that should reach some environments and not others filters on an explicit
 allow-list local** — `image_build_environment`, `deployment_environments`,
