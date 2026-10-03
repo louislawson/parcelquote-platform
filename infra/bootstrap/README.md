@@ -16,6 +16,9 @@ in the repository intended to be run by hand — every other module runs in the 
 - A user-assigned managed identity for each environment that runs the container
 - Registry grants: `AcrPush` for the environment that builds images, and `AcrPull` for
   each environment's managed identity
+- `Monitoring Metrics Publisher` on each environment's resource group for its managed
+  identity, so the container app can publish telemetry to an Application Insights resource
+  with local authentication disabled
 
 ## Why it runs by hand
 
@@ -82,6 +85,11 @@ identity federation exists to avoid.
 - `Microsoft.ManagedIdentity` registered on the subscription
   (`az provider register --namespace Microsoft.ManagedIdentity --wait`) — registration is
   subscription-scoped, so a pipeline identity cannot do it
+- `Microsoft.Insights` registered on the subscription
+  (`az provider register --namespace Microsoft.Insights --wait`) — same constraint. The
+  environment module needs it for diagnostic settings, Application Insights and alerts, and
+  an apply without it fails on a 409 whose error code reads `InvalidAuthenticationToken`
+  while the message underneath names the real problem
 - Terraform >= 1.16
 - `terraform.tfvars`, copied from `terraform.tfvars.example` and filled in
 
