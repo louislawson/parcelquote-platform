@@ -67,6 +67,16 @@ resource "azurerm_monitor_diagnostic_setting" "diag_cae_env" {
   enabled_log { category = "ContainerAppHTTPLogs" }
 }
 
+# Three of these are decisions rather than settings, and the comment is here rather than beside
+# each one because a comment inside the block splits the alignment into groups.
+#
+# daily_data_cap_in_gb defaults to 100, and ingestion is $2.88/GB in UK South — a $288-a-day
+# ceiling on an environment whose standing cost is about £4 a month. local_authentication_enabled
+# is what makes the bootstrap grant necessary and the connection string below harmless: Terraform
+# mints this component, so the string is in state whatever we do, and the achievable outcome is
+# that the key stops working rather than that it is absent. sampling_percentage is the provider
+# default, stated because 100 reads as an oversight — at a handful of requests a day, sampling
+# would leave too few traces to be worth querying.
 resource "azurerm_application_insights" "appi_dev" {
   name                         = "appi-${var.project_app_service}-${var.environment}-${var.location_short}-01"
   location                     = data.azurerm_resource_group.rg_dev.location
@@ -77,7 +87,6 @@ resource "azurerm_application_insights" "appi_dev" {
   retention_in_days            = 30
   local_authentication_enabled = false
   sampling_percentage          = 100
-  ip_masking_enabled           = true
   tags                         = merge(local.common_tags, { environment = var.environment })
 }
 
