@@ -150,12 +150,16 @@ control-plane call authorised by RBAC, so with local authentication off the appl
 succeeds and logs simply stop arriving, with nothing reporting it. Change the two
 together or not at all.
 
-**Log table names changed with the destination.** `log_analytics_destination_type` is
-`Dedicated`, so each category lands in its own table: `ContainerAppConsoleLogs`,
-`ContainerAppSystemLogs` and `ContainerAppHTTPLogs`. Anything written before the switch
-is still in the `ContainerAppConsoleLogs_CL` and `ContainerAppSystemLogs_CL` custom
-tables, which keep their history and stop growing. A query against a `_CL` table
-therefore does not fail — it returns old rows and looks healthy, which is the trap.
+**Log table names changed with the destination.** Each category lands in its own table:
+`ContainerAppConsoleLogs`, `ContainerAppSystemLogs` and `ContainerAppHTTPLogs`. That is a
+property of the resource type rather than something configured — a managed environment
+supports only resource-specific tables, so `log_analytics_destination_type` is
+unconfigurable here and setting it produced a change on every plan while altering nothing.
+
+Anything written before the switch is still in the `ContainerAppConsoleLogs_CL` and
+`ContainerAppSystemLogs_CL` custom tables, which keep their history and stop growing. A
+query against a `_CL` table therefore does not fail — it returns old rows and looks
+healthy, which is the trap.
 
 **Probe ports are not checked against the container.** Liveness and readiness point at
 the app's own `/healthz` and `/readyz` on port 8000. A probe aimed at the wrong port

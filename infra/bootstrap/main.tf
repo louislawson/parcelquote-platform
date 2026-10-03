@@ -212,6 +212,22 @@ resource "azurerm_role_assignment" "acr_pull" {
   principal_type       = "ServicePrincipal"
 }
 
+# Scoped to the resource group, not to the Application Insights component Microsoft's guidance
+# names. The component lives in the environment module, and bootstrap referencing it would invert
+# the dependency and end this module's ability to run once, by hand, against an empty
+# subscription. The role carries only register and telemetry-write, so at this scope it means
+# "may write telemetry to any monitoring resource in this environment's group" — one component
+# today. It is what allows local_authentication_enabled = false on that component; move the
+# component to another group and telemetry fails with 403 while neither module reports anything.
+resource "azurerm_role_assignment" "monitoring_metrics_publisher" {
+  for_each = azurerm_user_assigned_identity.container_app
+
+  scope                = local.environment_resource_groups[each.key].id
+  role_definition_name = "Monitoring Metrics Publisher"
+  principal_id         = each.value.principal_id
+  principal_type       = "ServicePrincipal"
+}
+
 # ----------------------
 # KEY VAULT
 # ----------------------

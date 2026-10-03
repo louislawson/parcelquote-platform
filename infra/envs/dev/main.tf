@@ -53,16 +53,41 @@ resource "azurerm_monitor_diagnostic_setting" "diag_cae_env" {
   name                       = "diag-${var.project_app_service}-${var.environment}-${var.location_short}-01"
   target_resource_id         = azurerm_container_app_environment.cae_env.id
   log_analytics_workspace_id = azurerm_log_analytics_workspace.log_dev.id
-  # "Dedicated" is what puts each category in its own table. Without it everything lands in
-  # the legacy AzureDiagnostics table and ContainerAppHTTPLogs — the per-request status and
-  # latency the alerts are built on — never exists as a table at all.
-  log_analytics_destination_type = "Dedicated"
+
+  # No log_analytics_destination_type, deliberately. A managed environment only supports
+  # resource-specific tables, so the argument is unconfigurable for this target and Azure never
+  # echoes it back: setting it to "Dedicated" changed nothing and made every subsequent plan
+  # want to set it again. The per-category tables, ContainerAppHTTPLogs among them, are what
+  # this resource type produces regardless.
 
   # Logs only. AllMetrics is offered here, but platform metrics are already queryable
   # through Azure Monitor without paying Log Analytics ingestion for a second copy.
   enabled_log { category = "ContainerAppConsoleLogs" }
   enabled_log { category = "ContainerAppSystemLogs" }
   enabled_log { category = "ContainerAppHTTPLogs" }
+}
+
+# Three of these are decisions rather than settings, and the comment is here rather than beside
+# each one because a comment inside the block splits the alignment into groups.
+#
+# daily_data_cap_in_gb defaults to 100, and ingestion is $2.88/GB in UK South — a $288-a-day
+# ceiling on an environment whose standing cost is about £4 a month. local_authentication_enabled
+# is what makes the bootstrap grant necessary and the connection string below harmless: Terraform
+# mints this component, so the string is in state whatever we do, and the achievable outcome is
+# that the key stops working rather than that it is absent. sampling_percentage is the provider
+# default, stated because 100 reads as an oversight — at a handful of requests a day, sampling
+# would leave too few traces to be worth querying.
+resource "azurerm_application_insights" "appi_dev" {
+  name                         = "appi-${var.project_app_service}-${var.environment}-${var.location_short}-01"
+  location                     = data.azurerm_resource_group.rg_dev.location
+  resource_group_name          = data.azurerm_resource_group.rg_dev.name
+  workspace_id                 = azurerm_log_analytics_workspace.log_dev.id
+  application_type             = "web"
+  daily_data_cap_in_gb         = 1
+  retention_in_days            = 30
+  local_authentication_enabled = false
+  sampling_percentage          = 100
+  tags                         = merge(local.common_tags, { environment = var.environment })
 }
 
 resource "azurerm_container_app" "ca_dev" {
@@ -117,6 +142,27 @@ resource "azurerm_container_app" "ca_dev" {
       env {
         name        = "QUOTE_API_KEY"
         secret_name = "quote-api-key"
+      }
+
+      # A plain value, unlike the API key above, and deliberately so. With
+      # local_authentication_enabled = false on the component this string is an ingestion
+      # endpoint and a resource id rather than a credential — the instrumentation key inside it
+      # no longer authenticates anything. A secret block here would make `secret` stop meaning
+      # "this is a credential", which is the only thing distinguishing the block above. Turning
+      # local auth back on must move this into a secret block in the same change, because that
+      # one edit is what would turn this into an exposed live credential.
+      env {
+        name  = "APPLICATIONINSIGHTS_CONNECTION_STRING"
+        value = azurerm_application_insights.appi_dev.connection_string
+      }
+
+      # Selects Entra authentication and names the identity to use, which is required because a
+      # user-assigned identity cannot be inferred — there is no system-assigned one to fall back
+      # to. The client id is not a credential. This replaces passing a credential in application
+      # code: if the distro honours it, the app needs no azure-identity dependency at all.
+      env {
+        name  = "APPLICATIONINSIGHTS_AUTHENTICATION_STRING"
+        value = "Authorization=AAD;ClientId=${data.azurerm_user_assigned_identity.container_app.client_id}"
       }
 
       liveness_probe {
