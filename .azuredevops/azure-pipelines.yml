@@ -268,3 +268,27 @@ stages:
                         exit 1
                       fi
                       echo "confirmed: the pipeline identity cannot read the vault's secrets"
+                - task: AzureCLI@2
+                  displayName: "Assert the alert destination is live"
+                  inputs:
+                    azureSubscription: "azure-parcelquote-dev"
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      set -euo pipefail
+                      # Alert rules are configuration; this is the one part of the chain that
+                      # fails silently. A receiver whose address was never confirmed, or whose
+                      # mailbox starts rejecting, reports as not enabled while every rule around
+                      # it still looks healthy — and an alert firing into a void is worse than no
+                      # alert, because it buys confidence nobody has earned. Whether a threshold
+                      # would catch a real fault cannot be asserted without causing one, so this
+                      # checks the part that can be: that there is somewhere for an alert to go.
+                      status="$(az monitor action-group show \
+                                  --resource-group "rg-parcelquote-dev-uks-01" \
+                                  --name "ag-parcelquote-dev-uks-01" \
+                                  --query "emailReceivers[?name=='owner'].status | [0]" -o tsv)"
+                      if [ "$status" != "Enabled" ]; then
+                        echo "##vso[task.logissue type=error]alert email receiver is '$status', not Enabled; alerts would go nowhere"
+                        exit 1
+                      fi
+                      echo "confirmed: the alert email receiver is enabled"
