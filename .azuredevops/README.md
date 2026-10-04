@@ -134,16 +134,20 @@ It can be seen through the REST API, on the build definition under `triggers`.
 
 ## Recreating this in a fresh project
 
-1. Create the Azure Resource Manager service connection as `azure-parcelquote-dev`, using
+1. Work through **Prerequisites** in [infra/bootstrap/README.md](../infra/bootstrap/README.md)
+   first — it lists the subscription-scoped setup a pipeline identity cannot do for itself,
+   including two resource provider registrations. They are not repeated here, because two
+   copies of a checklist is how one of them goes stale
+2. Create the Azure Resource Manager service connection as `azure-parcelquote-dev`, using
    workload identity federation, and apply `infra/bootstrap` so its principal holds the
    role assignments the pipeline needs
-2. Create the pipeline from `azure-pipelines.yml`
-3. Add the `OWNER` pipeline variable
-4. Run it once; authorize the service connection at the prompt
-5. Add the Exclusive Lock check to the `dev` environment that the first run created
-6. Confirm fork builds are disabled in **Project settings → Pipelines → Settings**
-7. Install the **SonarQube Cloud** and **Snyk Security Scan** extensions in the
+3. Create the pipeline from `azure-pipelines.yml`
+4. Add the `OWNER` pipeline variable
+5. Run it once; authorize the service connection at the prompt
+6. Add the Exclusive Lock check to the `dev` environment that the first run created
+7. Confirm fork builds are disabled in **Project settings → Pipelines → Settings**
+8. Install the **SonarQube Cloud** and **Snyk Security Scan** extensions in the
    organization, then create the `sonarcloud-parcelquote` and `snyk-parcelquote` service
    connections and record their expiry dates above
-8. In SonarQube Cloud, switch **Administration → Analysis Method → Automatic Analysis**
+9. In SonarQube Cloud, switch **Administration → Analysis Method → Automatic Analysis**
    off, or CI analysis is ignored and coverage never appears

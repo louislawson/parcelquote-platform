@@ -12,7 +12,12 @@ and uses your own identity rather than the pipeline's.
 - Container Apps environment with a single Consumption workload profile
 - Diagnostic setting sending the environment's console, system and HTTP logs to that
   workspace
+- Workspace-based Application Insights, Entra-only ingestion, 1 GB daily cap
 - Container app serving the quote API over HTTPS, scaled to zero when idle
+- Action group with one email receiver, taking the address from `var.owner`
+- Three alerts: server errors and request latency as scheduled query rules, and availability
+  as a metric alert on the web test below
+- Standard availability test polling `/healthz` from one location every fifteen minutes
 
 ## What it only reads
 
@@ -169,3 +174,27 @@ goes healthy — which reads like a broken image rather than a configuration err
 **`environment` and the backend are independent.** The backend block names `tfstate-dev`
 literally, so changing `var.environment` repoints every resource name without repointing
 state.
+
+**An alert's scope decides its table names, and the two tables disagree.** Both scheduled
+query rules are scoped to the workspace, where Application Insights data lives under
+`AppRequests`, `AppTraces` and so on. Scope a rule to the Application Insights component
+instead and the same data is queried as `requests` — so a query copied between the two
+names a table that does not exist. That much is caught at apply, because
+`skip_query_validation` is left at its default of `false`.
+
+What is not caught is picking the wrong one deliberately. `ContainerAppHTTPLogs` is the
+ingress's view and `AppRequests` is the application's, and over identical traffic they
+reported a p95 of roughly 24 ms and 2 ms, with maxima of 48,224 ms and 2 ms. The difference
+is the time a caller spends waiting for a cold container, which belongs in an availability
+measure rather than a latency one. The latency alert reads `AppRequests` for that reason.
+
+**The availability test's timeout has to clear the cold start.** It defaults to 30 seconds
+and a measured cold start here is 48, so the default fails every test that finds the app
+asleep — monitoring reporting an outage it caused itself. It is set to 120, with
+`retry_enabled` as well, since the first attempt wakes the container and a retry lands warm.
+
+**The availability test location tags do not match the regions they name.** UK South is
+`emea-ru-msa-edge`; North Europe is `emea-gb-db3-azr`. They are historical and Microsoft's
+own documentation has an open issue about them, so read them from the API rather than a list:
+
+    GET <application insights id>/syntheticmonitorlocations?api-version=2015-05-01
