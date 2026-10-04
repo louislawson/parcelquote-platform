@@ -15,12 +15,40 @@ import secrets
 from decimal import Decimal
 from typing import Annotated, Final
 
+from azure.monitor.opentelemetry import configure_azure_monitor
 from fastapi import FastAPI, HTTPException, Security, status
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 
 from parcelquote.pricing import Zone
 from parcelquote.pricing import quote as price_parcel
+
+
+def _configure_telemetry() -> None:
+    """Start the Azure Monitor pipeline, if this deployment has somewhere to send telemetry.
+
+    The guard is not defensive. `configure_azure_monitor` raises without a connection string,
+    so an unguarded call would break `poetry run pytest`, `poetry run uvicorn` and anything
+    else importing this module on a machine with no Application Insights resource. The service
+    runs locally on `QUOTE_API_KEY` alone, and should keep doing so.
+
+    Unset is not the same as wrong, and only unset is tolerated. A connection string that is
+    present but malformed is left to raise, which stops the container instead of starting it
+    with telemetry silently disabled — a deployment that has been told where to send telemetry
+    and then sends none is the worse failure, and a crash at least says so. It will not look
+    like one: the container restarts until the revision is marked unhealthy, which reads as a
+    broken image rather than a bad variable.
+    """
+    if not os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):
+        return
+
+    configure_azure_monitor()
+
+
+# Called before the FastAPI object exists, deliberately. The distro auto-instruments by
+# patching the FastAPI class, so an app constructed first would not be instrumented at all —
+# Microsoft's own FastAPI sample has the same order.
+_configure_telemetry()
 
 app = FastAPI(
     title="parcelquote",

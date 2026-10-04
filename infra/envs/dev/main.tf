@@ -165,6 +165,17 @@ resource "azurerm_container_app" "ca_dev" {
         value = "Authorization=AAD;ClientId=${data.azurerm_user_assigned_identity.container_app.client_id}"
       }
 
+      # The two probes below fire every ten seconds each, so tracing them would add some 17,000
+      # spans a day of no interest and crowd the real requests out of every Application Insights
+      # view. The value is a comma-separated list of regexes joined with | and searched against
+      # the whole URL, so these match without anchoring. /version is deliberately not excluded:
+      # the smoke test polls it a few times per deploy, and which commit served a request is
+      # worth a span.
+      env {
+        name  = "OTEL_PYTHON_EXCLUDED_URLS"
+        value = "healthz,readyz"
+      }
+
       liveness_probe {
         transport               = "HTTP"
         path                    = "/healthz"

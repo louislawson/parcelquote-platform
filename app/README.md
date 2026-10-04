@@ -102,6 +102,14 @@ will do locally:
 export QUOTE_API_KEY=local-dev-key
 ```
 
+Telemetry stays off. Application Insights is configured only when
+`APPLICATIONINSIGHTS_CONNECTION_STRING` is set, and nothing sets it on a development machine.
+That guard is not decoration — the distro raises on an empty connection string rather than
+quietly doing nothing, so without it the service would refuse to start here, and so would the
+test suite. The dev environment supplies that variable along with
+`APPLICATIONINSIGHTS_AUTHENTICATION_STRING`, which selects Entra authentication and names the
+managed identity to use.
+
 ```bash
 poetry run uvicorn parcelquote.main:app --reload
 ```
@@ -150,3 +158,4 @@ which revision answered.
     tests/
       test_pricing.py       Unit tests for the pricing rules
       test_api.py           Endpoint tests through the FastAPI test client
+      test_telemetry.py     The telemetry guard, which is not an endpoint

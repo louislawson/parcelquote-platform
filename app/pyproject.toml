@@ -9,6 +9,10 @@ dependencies = [
     "fastapi (>=0.141.1,<0.142.0)",
     "uvicorn[standard] (>=0.52.4,<0.53.0)",
     "pydantic (>=2.13.5,<3.0.0)",
+    # The floor is load-bearing rather than hygiene. Below 1.8.10 the distro pins an exporter
+    # predating the fix for azure-sdk-for-python#46103, which logs an Unauthorized error every
+    # fifteen minutes when the component has local authentication disabled — which ours does.
+    "azure-monitor-opentelemetry (>=1.8.10,<2.0.0)",
 ]
 
 [dependency-groups]
