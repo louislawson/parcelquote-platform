@@ -24,6 +24,11 @@ locals {
 
 data "azurerm_client_config" "current" {}
 
+# Read for the budget, which needs the subscription's resource id rather than the bare GUID
+# that client_config exposes. Building the one from the other by string concatenation would
+# work and would also be the kind of thing this repository avoids where a reference exists.
+data "azurerm_subscription" "current" {}
+
 # ----------------------
 # RESOURCE GROUP
 # ----------------------
@@ -305,4 +310,67 @@ resource "azurerm_role_assignment" "kv_operator" {
   scope                = each.value.id
   role_definition_name = "Key Vault Secrets Officer"
   principal_id         = data.azurerm_client_config.current.object_id
+}
+
+# ----------------------
+# BUDGET
+# ----------------------
+
+# Subscription-scoped so it covers the registry, which lives in the shared group and is the
+# largest standing cost, and then filtered because this subscription is not only this project —
+# three unrelated workloads share it, and an unfiltered budget would be tripped by their spend
+# or hide ours inside it. The filter names the resource group resources rather than literals, so
+# prod joins it automatically when that environment is built.
+#
+# No environment or location in the name: the resource is subscription-scoped and belongs to
+# none, which is why it does not follow the usual pattern.
+#
+# amount is in the billing currency, not a currency of our choosing.
+resource "azurerm_consumption_budget_subscription" "budget_project" {
+  name            = "budget-${var.project_app_service}-01"
+  subscription_id = data.azurerm_subscription.current.id
+  amount          = 10
+  time_grain      = "Monthly"
+
+  # start_date must be the first of a month, and a past one has to fall inside the time grain —
+  # the current month, for Monthly. It is also ForceNew. So this value works indefinitely on
+  # re-apply but makes a from-scratch create fail in any later month, which is the one path
+  # nobody exercises. Bump it when standing this up on a fresh subscription; the recreation
+  # checklist in .azuredevops/README.md says so too. timestamp() is not a way out: impure
+  # against a ForceNew field, it would recreate the budget on every apply.
+  time_period {
+    start_date = "2026-10-01T00:00:00Z"
+  }
+
+  filter {
+    dimension {
+      name = "ResourceGroupName"
+      values = [
+        azurerm_resource_group.rg_tfstate.name,
+        azurerm_resource_group.rg_shared.name,
+        azurerm_resource_group.rg_dev.name,
+        azurerm_resource_group.rg_prod.name,
+      ]
+    }
+  }
+
+  # Actual at 80% is the warning; forecast at 100% is the one that arrives before the money is
+  # gone. contact_emails rather than contact_groups: the action group lives in the dev
+  # environment module, and pointing bootstrap at it would invert the dependency between the two
+  # for the sake of a notification address bootstrap already holds.
+  notification {
+    enabled        = true
+    threshold      = 80.0
+    operator       = "GreaterThan"
+    threshold_type = "Actual"
+    contact_emails = [var.owner]
+  }
+
+  notification {
+    enabled        = true
+    threshold      = 100.0
+    operator       = "GreaterThan"
+    threshold_type = "Forecasted"
+    contact_emails = [var.owner]
+  }
 }

@@ -92,6 +92,10 @@ identity federation exists to avoid.
   while the message underneath names the real problem
 - Terraform >= 1.16
 - `terraform.tfvars`, copied from `terraform.tfvars.example` and filled in
+- The budget's `start_date` in `main.tf` set to the first of the current month. A past start
+  date has to fall inside the time grain, which for `Monthly` means this month, and the field
+  is `ForceNew` — so the committed value keeps working on re-apply but fails a from-scratch
+  create in any later month. That is the one path a working subscription never exercises
 
 ## Running it
 
