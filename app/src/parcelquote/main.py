@@ -15,8 +15,9 @@ import secrets
 from decimal import Decimal
 from typing import Annotated, Final
 
+import fastapi
 from azure.monitor.opentelemetry import configure_azure_monitor
-from fastapi import FastAPI, HTTPException, Security, status
+from fastapi import HTTPException, Security, status
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 
@@ -45,12 +46,17 @@ def _configure_telemetry() -> None:
     configure_azure_monitor()
 
 
-# Called before the FastAPI object exists, deliberately. The distro auto-instruments by
-# patching the FastAPI class, so an app constructed first would not be instrumented at all —
-# Microsoft's own FastAPI sample has the same order.
+# Called before the FastAPI object exists, deliberately, and the app below is built as
+# `fastapi.FastAPI` rather than from an imported `FastAPI` name for the same reason. The
+# instrumentor does not wrap a method, it rebinds one: `_instrument` sets
+# `fastapi.FastAPI = _InstrumentedFastAPI`. A name bound by `from fastapi import FastAPI` at the
+# top of this module still points at the original class afterwards, so the app would be built
+# unpatched and no request span would ever be produced — which is exactly what happened, and the
+# only symptom was an empty AppRequests table while dependencies and metrics flowed normally.
+# Microsoft's FastAPI sample uses the attribute lookup for this reason, not as a style choice.
 _configure_telemetry()
 
-app = FastAPI(
+app = fastapi.FastAPI(
     title="parcelquote",
     version="0.1.0",
     description="Prices parcels on chargeable weight and destination zone.",
