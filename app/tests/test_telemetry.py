@@ -54,3 +54,19 @@ def test_telemetry_is_skipped_when_no_connection_string_is_set(monkeypatch):
     )
 
     main._configure_telemetry()
+
+
+def test_the_module_does_not_bind_a_fastapi_name(monkeypatch):
+    """Guards the subtlest part of the setup, which once shipped broken.
+
+    The instrumentor does not wrap a method, it rebinds one — `_instrument` sets
+    `fastapi.FastAPI = _InstrumentedFastAPI`. A module-level `from fastapi import FastAPI`
+    therefore captures the original class before `configure_azure_monitor` runs, and the app is
+    built unpatched: no request span is ever produced, while dependency and metric telemetry
+    flows normally, so nothing looks wrong. `main` builds the app as `fastapi.FastAPI` to get
+    the attribute lookup, and this asserts the tempting shorthand has not come back.
+
+    It will also fail if the name is imported for an annotation and never used to construct,
+    which is a false positive — but one that fails loudly, where the real fault is silent.
+    """
+    assert not hasattr(main, "FastAPI")
