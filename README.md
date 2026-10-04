@@ -17,7 +17,7 @@ provisioning and deployment path can leak one. The third-party quality gates are
 exception — SonarQube Cloud and Snyk authenticate with expiring API tokens held in Azure
 DevOps service connections, because neither offers federation.
 
-Phases 0 to 4 are complete: that identity chain is live, Terraform state is remote and
+Phases 0 to 5 are complete: that identity chain is live, Terraform state is remote and
 isolated per environment, and every commit to main is linted, tested, published to the
 registry as an image tagged with its commit SHA, then deployed to a dev environment on
 Container Apps. A smoke test confirms the running revision reports the commit that built
@@ -38,7 +38,24 @@ identifier and never its value. The pipeline that deploys the application cannot
 because Contributor grants no data-plane access under RBAC authorization and cannot grant
 itself any, and every deploy asserts that rather than assuming it.
 
-Progressive traffic shifting, production and observability arrive with the phases below.
+Phase 5 makes the platform observable, and the interesting part is what the numbers forced.
+Container Apps logs now reach the workspace through a diagnostic setting rather than with its
+shared key, which removed the last credential this project stored in the clear and unlocked
+per-request status and latency. The application reports traces to Application Insights
+authenticating as its managed identity, with ingestion keyed to Entra rather than an
+instrumentation key. Three alerts and an availability test notify an action group, and a
+subscription budget watches the spend — filtered to this project's resource groups, because the
+subscription is shared and an unfiltered one would measure somebody else.
+
+The thresholds were set against measured data rather than chosen, and two of them are the only
+values that work. At two to eighteen requests an hour a failure *rate* is meaningless, and a
+fifteen-minute window holds a single availability sample, so any threshold needing two failures
+could never fire during an outage. The latency alert reads the application's own view rather
+than the ingress's, because a cold start here takes 48 seconds and that time belongs in an
+availability measure, not a latency one — the same measurement is why the availability test runs
+with a 120-second timeout instead of the 30-second default that would have failed every check.
+
+Progressive traffic shifting and production arrive with the phases below.
 
 See [infra/bootstrap](infra/bootstrap/README.md) for how the foundational resources
 are provisioned and what permissions they require,
@@ -71,7 +88,7 @@ Work in progress. Built in phases, each independently functional.
 - [x] **Phase 2** — Dev environment provisioned with Terraform, continuous deployment
 - [x] **Phase 3** — Code quality and security gates
 - [x] **Phase 4** — Key Vault, managed identity and API authentication
-- [ ] **Phase 5** — Monitoring, alerting and availability tests
+- [x] **Phase 5** — Monitoring, alerting, availability tests and a cost budget
 - [ ] **Phase 6** — Production environment, shared Terraform module, blue/green and canary releases
 - [ ] **Phase 7** — Architecture documentation and decision records
 
