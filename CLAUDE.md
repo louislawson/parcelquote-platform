@@ -55,10 +55,16 @@ interesting reason behind it, leave it uncommented rather than padding.
 so a name cannot disagree with the variable that is supposed to produce it. Storage accounts
 and the container registry drop the hyphens, and Key Vault drops the `-01` because vault
 names cap at 24 characters. Terraform resource labels are snake_case and mirror the
-abbreviation: `rg_dev`, `st_tfstate`, `cr_shared`, `ca_dev`.
+abbreviation: `rg_dev`, `st_tfstate`, `cr_shared`. In a root configuration the label carries
+the environment or purpose, matching the name it produces. **Inside a shared module it does
+not** — `ca`, not `ca_dev`, because the module serves every environment and a label naming one
+of them is wrong for the others. The same applies to any literal in a value: a module
+interpolates `var.environment` where a root could have written `dev`.
 
-**Every taggable resource carries `merge(local.common_tags, { environment = ... })`.** A few
-Azure resources have no `tags` argument in the schema at all —
+**Every taggable resource carries `merge(local.common_tags, { environment = ... })` in a root
+configuration, or `var.tags` inside a module.** A module takes the finished map and applies it
+verbatim, because the `source` tag names the configuration that owns the resource and only the
+root knows that. A few Azure resources have no `tags` argument in the schema at all —
 `azurerm_monitor_diagnostic_setting` is one — so check the provider docs before treating an
 untagged resource as an omission.
 
