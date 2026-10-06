@@ -6,6 +6,12 @@ the image the pipeline built, and the Log Analytics workspace its logs land in.
 The pipeline applies this on every commit to main. Running it locally is for iterating,
 and uses your own identity rather than the pipeline's.
 
+The resources themselves live in the shared
+[workload module](../../modules/workload/README.md), which the production environment will
+call too once it exists. This directory holds the state, the backend that names it, the tags,
+and the values that make this environment dev. The list below is what the module creates on
+its behalf.
+
 ## What it creates
 
 - Log Analytics workspace, 30-day retention, Entra-only
