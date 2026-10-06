@@ -9,8 +9,15 @@
 # No USER in this stage. The builder needs root to install Poetry; the runtime
 # stage drops privileges once its copying is done.
 
-# python:3.12-slim-bookworm — Python 3.12.14, Debian 12, linux/amd64.
-FROM python@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e AS base
+# This is the multi-arch index digest, not the linux/amd64 one, so it resolves on any platform
+# the build runs on. Bumping it is also the remedy when the Snyk container gate fails on an OS
+# package: the gate passes --fail-on=upgradable, so it only ever fails on something Debian has
+# already fixed, and the official image picks those up within a day or two of the advisory.
+# Reach for apt-get in this file only if that window is ever genuinely too long — it trades the
+# reproducibility this pin exists for, and it has not been needed yet.
+
+# python:3.12-slim-bookworm — Python 3.12.15, Debian 12.
+FROM python@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258 AS base
 
 # PYTHONUNBUFFERED keeps logs flowing rather than sitting in a buffer until the
 # process exits, which matters once App Insights is collecting them.
