@@ -46,8 +46,15 @@ crash.*.log
 *.tfvars.json
 
 # Non-secret per-environment configuration, deliberately committed so the pipeline
-# and a local run share one source of truth. Secrets stay out by the rule above.
+# and a local run share one source of truth. Secrets stay out by the rule above —
+# owner lives in terraform.tfvars, which stays ignored, and the pipeline passes it
+# as TF_VAR_owner instead.
+#
+# One negation per environment, named rather than globbed. A pattern like
+# !infra/envs/*/*.tfvars would also un-ignore terraform.tfvars in both directories,
+# which is where the one value worth keeping out of git actually lives.
 !infra/envs/dev/dev.tfvars
+!infra/envs/prod/prod.tfvars
 
 # Ignore override files as they are usually used to override resources locally and so
 # are not checked in
