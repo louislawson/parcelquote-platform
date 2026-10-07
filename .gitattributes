@@ -1,0 +1,9 @@
+# Every text file is LF in the repository and LF in the working tree. The first half was
+# already true, but only because core.autocrlf happened to be set on one machine — a
+# contributor without it commits CRLF and no gate here notices, because terraform fmt, ruff
+# and checkov all tolerate either. This makes it a property of the repository instead.
+#
+# eol=lf rather than a bare text=auto is the half that stops the warnings: without it Git
+# keeps rewriting these files to CRLF on checkout and back to LF on commit. Nothing in this
+# repository needs CRLF, and there are no binary files for text=auto to misclassify.
+* text=auto eol=lf
