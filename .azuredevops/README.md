@@ -66,6 +66,49 @@ be revoked immediately, from **My account → Access tokens** in SonarQube Cloud
 about to lapse, and when one does the affected step fails with an authentication error
 rather than anything that points here. Renew both and update this table.
 
+### When a SaaS gate is down
+
+Both Snyk tasks fail the build on tool errors as well as on findings, deliberately: a gate
+that passes when it could not evaluate manufactures confidence. Two retries absorb a single
+bad response, but not a sustained outage — on 6 October 2026 a Snyk incident failed two
+consecutive builds roughly eight minutes apart, and the same commit passed unchanged the next
+morning.
+
+So the first move is to check whether the vendor is actually down rather than inferring it
+from build history: <https://status.snyk.io> and <https://sonarcloud.statuspage.io>. Waiting is
+usually correct, because nothing here has an SLA and the cost of not deploying for a few hours
+is nil.
+
+**If something genuinely must ship while a gate is unreachable**, edit the pipeline to remove
+the failing task, ship, and revert — three commits, all in the history. There is deliberately
+no skip variable: a variable is the same bypass with less of a trace, and the point of a
+fail-closed gate is that going around it leaves a record. The one thing not to do is flip
+`failOnIssues` to `false` and forget, because that is indistinguishable from a passing gate
+forever afterwards.
+
+### Pinned tool versions
+
+Five versions are pinned, and nothing automatically updates any of them. Automated updates
+were investigated and declined: Dependabot has no Azure Pipelines ecosystem and no generic
+manager, so it cannot see four of the five, and on a `FROM` line carrying a digest without a
+tag it resolves the digest of `latest` — which would propose a Python interpreter migration as
+a security update. Renovate can reach all five through custom regex managers, and was declined
+on the maintenance cost of five hand-written regexes that fail silently when they stop
+matching.
+
+| Pinned | Version | Where | How to bump |
+| --- | --- | --- | --- |
+| Terraform | `1.16.2` | `templates/install-terraform-tools.yml` | Version and SHA256 together; the command is in a comment beside the parameter |
+| tflint | `v0.64.0` | `templates/install-terraform-tools.yml` | Version and SHA256 together; the command is in a comment beside the parameter |
+| Checkov | `3.3.19` | `azure-pipelines.yml`, the `pipx install` step | Bump both the pin and the step's `displayName`, and the local install, or local and CI disagree |
+| Snyk CLI | `v1.1307.4` | `azure-pipelines.yml`, `distributionChannel` on both Snyk tasks | `curl -s https://downloads.snyk.io/cli/stable/version`, then prefix `v` — the unprefixed path 403s |
+| Base image | digest | `app/Dockerfile` | See the comment above the `FROM` line |
+
+Only the base image has anything watching it: Snyk's container gate catches it when a pinned
+digest goes stale, which is how the perl-base advisories surfaced within about 36 hours. The
+other four fail quietly by under-checking rather than by failing, so they need a periodic look
+rather than a gate.
+
 ### The `dev` environment
 
 Referenced as `environment: dev` by the deployment job. Azure DevOps creates an

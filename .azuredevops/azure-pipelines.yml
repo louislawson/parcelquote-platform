@@ -82,8 +82,43 @@ stages:
             inputs:
               pollingTimeoutSec: "300"
 
+          # Both Snyk tasks pin distributionChannel, and the reason is supply chain rather than
+          # reproducibility. Unpinned, this task downloads snyk-linux from the stable channel
+          # and executes it, with no checksum and no signature — in a pipeline that verifies
+          # Terraform against a SHA256 and a GPG fingerprint, and tflint against a SHA256.
+          #
+          # Pinning does NOT make findings reproducible, and assuming it does would be a false
+          # sense of control. Checkov's checks ship inside the package, so pinning 3.3.19 pins
+          # the policy set; Snyk's verdicts come from its backend advisory database, which
+          # changes continuously whatever the client version. Two runs of this pinned CLI a week
+          # apart can legitimately disagree.
+          #
+          # It is also only half the job. The task downloads snyk-to-html from /latest/ as well
+          # and exposes no input for it, so one of the two binaries stays unpinned no matter
+          # what is configured here. Closing that would mean dropping the marketplace task and
+          # handling the API token in a script, which is worse than the gap.
+          #
+          # A malformed value does not fail — it silently falls back to "stable". The task runs
+          # the input through semver.clean and on failure logs "Invalid version format" and
+          # carries on, so a typo here leaves the pipeline unpinned while looking pinned. The
+          # only proof is the build log: it must show the version echoed back and the download
+          # URL containing it. Either "v1.1307.4" or "1.1307.4" is accepted and both resolve to
+          # the same URL; the v form is written here so the string appears in that URL verbatim
+          # and the check is a literal match rather than a transformation.
+          #
+          # retryCountOnTaskFailure does not loosen the gate. A 504 from Snyk's backend is not a
+          # finding, and reporting one as a security verdict is inaccurate rather than lenient —
+          # builds 48 and 49 both failed that way during a vendor incident. It costs about forty
+          # seconds per retry when a vulnerability is genuine, because the retry cannot tell the
+          # two apart either. Two retries will not survive a sustained outage, only a blip.
+          #
+          # failOnIssues stays true, including for tool errors. A gate that passes when it could
+          # not evaluate manufactures confidence, which is the same mistake as an alert firing
+          # into a void. When Snyk is unreachable and something must ship, see the break-glass
+          # note in README.md rather than flipping this.
           - task: SnykSecurityScan@1
             displayName: "Snyk — dependencies"
+            retryCountOnTaskFailure: 2
             inputs:
               serviceConnectionEndpoint: "snyk-parcelquote"
               organization: "louislawson"
@@ -92,11 +127,14 @@ stages:
               targetFile: "poetry.lock"
               severityThreshold: "high"
               additionalArguments: "--fail-on=upgradable"
+              distributionChannel: "v1.1307.4"
               monitorWhen: "never"
               failOnIssues: true
 
+          # Same pinning and retry reasoning as above.
           - task: SnykSecurityScan@1
             displayName: "Snyk — container image"
+            retryCountOnTaskFailure: 2
             inputs:
               serviceConnectionEndpoint: "snyk-parcelquote"
               organization: "louislawson"
@@ -105,6 +143,7 @@ stages:
               dockerfilePath: "app/Dockerfile"
               severityThreshold: "high"
               additionalArguments: "--fail-on=upgradable"
+              distributionChannel: "v1.1307.4"
               monitorWhen: "never"
               failOnIssues: true
       - job: TerraformChecks
