@@ -143,6 +143,68 @@ names when it exports them, while Terraform matches `TF_VAR_` names case-sensiti
 variable named `owner` in the library arrives as `OWNER` in the process environment, which
 Terraform does not recognise.
 
+## Creating an Azure service connection, and why it is done by hand
+
+Both Azure connections were created with the **manual** workload identity option, not the
+automatic one, and that is deliberate. Automatic setup has Azure DevOps create the app
+registration *and* assign it a role in Azure; manual setup has it create nothing. Since every
+privilege these identities hold comes from `infra/bootstrap`, manual keeps that true —
+`az role assignment list` against either principal returns exactly the assignments Terraform
+made and nothing else. Automatic would also require Owner on the subscription.
+
+The order matters, because the connection cannot be finished until the credential exists:
+
+1. **Azure portal → App registrations → New registration.** Name it `sp-parcelquote-<env>`.
+   Single tenant — "Accounts in this organizational directory only". **No redirect URI**: that
+   field is for interactive sign-in, and this is the client credentials flow with a federated
+   assertion. Copy the **Application (client) ID** and **Directory (tenant) ID**.
+2. **Project settings → Service connections → New → Azure Resource Manager**, then "App
+   registration or Managed identity (manual)" with the Workload identity federation
+   credential. Name it `azure-parcelquote-<env>`, environment Azure Cloud, paste the tenant id.
+3. Azure DevOps **generates** the **Issuer** and **Subject identifier** — copy both. Set scope
+   level Subscription with the subscription id and name, paste the client id, and leave
+   **Grant access permission to all pipelines** unticked. Choose **Keep as draft**.
+4. **Back in the portal → the app registration → Certificates & secrets → Federated
+   credentials → Add credentials → "Other issuer".** Paste the issuer and subject, set type to
+   **Explicit subject identifier**, and save.
+5. **Skip Microsoft's next step.** Their procedure ends by granting the app registration a role
+   such as Contributor. Do not: `infra/bootstrap` grants it, and a second grant made here is a
+   privilege Terraform does not know about. This is the one step in the vendor's instructions
+   that must not be followed.
+6. Back in Azure DevOps, **Finish setup** and save — see the next section about verification.
+7. `az ad sp show --id <client-id> --query id -o tsv` gives the **Enterprise Application**
+   object id for `pipeline_principal_ids`. Three GUIDs exist for one identity and only this one
+   works; `infra/bootstrap/README.md` says the same thing where the variable is documented.
+
+**Never add a client secret or a certificate.** Both connections have zero of each, and that is
+what makes the claim of no stored Azure credential true rather than approximate.
+
+New connections use the Microsoft Entra issuer, `https://login.microsoftonline.com/<tenant>/v2.0`.
+The older Azure DevOps issuer, `https://vstoken.dev.azure.com`, **retires on 1 July 2027** —
+Azure DevOps flags affected connections in the list with an **Update** button, and the guidance
+is to convert the existing connection rather than replace it. `azure-parcelquote-prod` was
+created on the Entra issuer and needs nothing; `azure-parcelquote-dev` predates that default
+and should be checked.
+
+## "Verify and save" fails, and should
+
+Verifying a connection calls `Microsoft.Resources/subscriptions/read` at **subscription** scope:
+
+    The client '...' with object id '...' does not have authorization to perform action
+    'Microsoft.Resources/subscriptions/read' over scope '/subscriptions/...'
+
+Neither pipeline identity holds a subscription-scoped role. Each has Contributor on one
+resource group, Storage Blob Data Contributor on one state container, and — for dev only —
+AcrPush on the registry. Contributor on a resource group does not confer subscription read, so
+verification cannot pass, before or after `infra/bootstrap` runs. It is the scoping working.
+
+Save without verifying. Do **not** grant Reader at subscription scope to make the check go
+green: that is a standing privilege added to satisfy a validation step rather than a
+requirement, and it would be invisible in Terraform.
+
+Nothing in the pipeline needs subscription read. The deploy stage takes `ARM_SUBSCRIPTION_ID`
+from `az account show`, which reads the login context rather than Azure Resource Manager.
+
 ## First-use authorization looks like a failure
 
 The first pipeline run to reference a protected resource — a service connection, an
@@ -181,9 +243,10 @@ It can be seen through the REST API, on the build definition under `triggers`.
    first — it lists the subscription-scoped setup a pipeline identity cannot do for itself,
    including two resource provider registrations. They are not repeated here, because two
    copies of a checklist is how one of them goes stale
-2. Create the Azure Resource Manager service connection as `azure-parcelquote-dev`, using
-   workload identity federation, and apply `infra/bootstrap` so its principal holds the
-   role assignments the pipeline needs
+2. Create the Azure Resource Manager service connection as `azure-parcelquote-dev` by the
+   manual procedure in **Creating an Azure service connection** above, then apply
+   `infra/bootstrap` so its principal holds the role assignments the pipeline needs. Expect
+   verification to fail; that is covered above too
 3. Create the pipeline from `azure-pipelines.yml`
 4. Add the `OWNER` pipeline variable
 5. Run it once; authorize the service connection at the prompt

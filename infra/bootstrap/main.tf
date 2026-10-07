@@ -8,18 +8,27 @@ locals {
   # Only dev builds images. Prod promotes an existing tag, so it needs no
   # push grant at all until that changes.
   image_build_environment = "dev"
-  # Environments that run the container and therefore need to pull it.
-  # Prod joins this list when its environment is built.
-  deployment_environments = ["dev"]
+  # Environments that run the container and therefore need to pull it. Adding an entry here is
+  # not a small edit: it creates that environment's managed identity, its AcrPull and Monitoring
+  # Metrics Publisher grants, its key vault and the vault's Secrets User grant. Five resources
+  # and three privileges from one string, which is the point of keeping it an explicit list
+  # rather than deriving it from var.environments.
+  deployment_environments = ["dev", "prod"]
   environment_resource_groups = {
     dev  = azurerm_resource_group.rg_dev
     prod = azurerm_resource_group.rg_prod
   }
-  # Environments whose secrets an operator sets by hand. Dev only — a standing
-  # human write grant on production secrets is not something to leave lying
-  # around, so prod's will arrive another way. Deliberately an allow-list, so
-  # adding an environment elsewhere cannot quietly grant one here.
-  manual_secret_environments = ["dev"]
+  # Environments whose secrets an operator sets by hand. A standing human write
+  # grant on production secrets is not something to leave lying around.
+  # Deliberately an allow-list, so adding an environment elsewhere cannot
+  # quietly grant one here.
+  #
+  # Prod is here temporarily, to write its initial quote-api-key, and comes out
+  # in the next commit. That is not theatre even though the operator could
+  # self-grant at any time — they hold subscription access already, so this list
+  # was never a boundary against them. What it prevents is a standing data-plane
+  # grant that outlives the task and that nothing afterwards is watching.
+  manual_secret_environments = ["dev", "prod"]
 }
 
 data "azurerm_client_config" "current" {}
