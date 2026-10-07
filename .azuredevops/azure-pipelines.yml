@@ -155,15 +155,27 @@ stages:
               terraform fmt -check -diff -recursive infra
             displayName: "Check formatting across infra"
 
+          # Discovered rather than listed. The previous version named two directories, and when
+          # infra/envs/prod arrived it was validated by nothing — the build passed while
+          # checking none of the configuration the change was about. Anything holding a
+          # backend block or a provider block is a root configuration and belongs here; the
+          # shared module is covered through the roots that call it.
           - script: |
               set -euo pipefail
-              for dir in infra/bootstrap infra/envs/dev; do
+              mapfile -t dirs < <(find infra -name providers.tf -printf '%h\n' | sort)
+              if [ "${#dirs[@]}" -eq 0 ]; then
+                echo "##vso[task.logissue type=error]no root configurations found under infra"
+                exit 1
+              fi
+              printf 'validating %d configurations:\n' "${#dirs[@]}"
+              printf '  %s\n' "${dirs[@]}"
+              for dir in "${dirs[@]}"; do
                 echo "--- $dir"
                 terraform -chdir="$dir" init -backend=false -input=false
                 terraform -chdir="$dir" validate
                 tflint --chdir="$dir"
               done
-            displayName: "Validate and lint each module"
+            displayName: "Validate and lint each configuration"
 
           - script: |
               set -euo pipefail
