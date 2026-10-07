@@ -18,17 +18,19 @@ locals {
     dev  = azurerm_resource_group.rg_dev
     prod = azurerm_resource_group.rg_prod
   }
-  # Environments whose secrets an operator sets by hand. A standing human write
-  # grant on production secrets is not something to leave lying around.
-  # Deliberately an allow-list, so adding an environment elsewhere cannot
-  # quietly grant one here.
+  # Environments whose secrets an operator sets by hand. Dev only — a standing
+  # human write grant on production secrets is not something to leave lying
+  # around. Deliberately an allow-list, so adding an environment elsewhere
+  # cannot quietly grant one here.
   #
-  # Prod is here temporarily, to write its initial quote-api-key, and comes out
-  # in the next commit. That is not theatre even though the operator could
-  # self-grant at any time — they hold subscription access already, so this list
-  # was never a boundary against them. What it prevents is a standing data-plane
-  # grant that outlives the task and that nothing afterwards is watching.
-  manual_secret_environments = ["dev", "prod"]
+  # Prod's quote-api-key was written by adding "prod" here, applying, setting the
+  # value, then this commit removing it and applying again. The previous commit
+  # is that window. Doing it the same way again is the supported route; what is
+  # not supported is leaving prod in the list, because then the grant outlives
+  # the task with nothing afterwards watching it. The list was never a boundary
+  # against the operator, who holds subscription access and could self-grant at
+  # any time — it exists so that nothing standing is left behind.
+  manual_secret_environments = ["dev"]
 }
 
 data "azurerm_client_config" "current" {}
