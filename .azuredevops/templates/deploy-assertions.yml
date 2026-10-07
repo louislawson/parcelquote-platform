@@ -1,0 +1,102 @@
+# The three checks that follow every apply, extracted because dev and prod run them
+# identically and only the names differ. The deploy stages themselves are deliberately not
+# templated: from phase 6's traffic-shifting work onwards prod gains multi-revision mode,
+# weighted traffic and a rollback path that dev does not get, so the stages diverge. These
+# three do not, which is what makes them worth sharing.
+#
+# Resource names are literal here, built from the environment parameter, while Terraform
+# interpolates the same names from var.project_app_service. That asymmetry is real: a renamed
+# project would need editing in both places, and the pipeline would fail at this step rather
+# than at the apply. It is the price of asserting against Azure rather than against state.
+#
+# Requires APP_FQDN to be set by the preceding apply step with task.setvariable. The first
+# check fails loudly if it is missing rather than silently testing nothing.
+
+parameters:
+  - name: environment
+    type: string
+  # Not derived from the environment name. The connection is Azure DevOps configuration rather
+  # than an Azure resource, so it does not have to follow the resource naming pattern and
+  # deriving it would couple two conventions that are maintained in different places.
+  - name: serviceConnection
+    type: string
+
+steps:
+  - script: |
+      set -euo pipefail
+      if [ -z "${APP_FQDN:-}" ]; then
+        echo "##vso[task.logissue type=error]APP_FQDN is empty - the apply step did not set it"
+        exit 1
+      fi
+
+      TAG="${BUILD_SOURCEVERSION:0:7}"
+      BASE="https://${APP_FQDN}"
+      RETRY=(--retry 10 --retry-all-errors --retry-delay 5 --max-time 20)
+
+      echo "Smoke testing $BASE, expecting $TAG"
+
+      echo "healthz: $(curl -fsS "${RETRY[@]}" "$BASE/healthz")"
+
+      # Traffic reaches the new revision a moment after apply returns, so
+      # poll rather than asserting once.
+      sha=""
+      for attempt in $(seq 1 12); do
+        sha="$(curl -fsS --max-time 15 "$BASE/version" | jq -r '.git_sha' || true)"
+        [ "$sha" = "$TAG" ] && break
+        echo "attempt $attempt: git_sha=${sha:-<no response>}"
+        sleep 5
+      done
+
+      if [ "$sha" != "$TAG" ]; then
+        echo "##vso[task.logissue type=error]/version returned git_sha=$sha, expected $TAG"
+        exit 1
+      fi
+
+      echo "$APP_FQDN is serving $TAG"
+    displayName: "Smoke test the new ${{ parameters.environment }} revision"
+
+  - task: AzureCLI@2
+    displayName: "Assert the ${{ parameters.environment }} pipeline identity cannot read the secret"
+    inputs:
+      azureSubscription: ${{ parameters.serviceConnection }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        # Contributor on the resource group is a control-plane role: under RBAC
+        # authorization it grants no data-plane access to secret values, and it
+        # cannot create the role assignment that would. This asserts that rather
+        # than assuming it, so the day someone grants this identity Key Vault
+        # Secrets User to fix something unrelated, the build says so.
+        if az keyvault secret show \
+             --vault-name "kv-parcelquote-${{ parameters.environment }}-uks" \
+             --name "quote-api-key" -o none 2>/dev/null; then
+          echo "##vso[task.logissue type=error]the pipeline identity can read quote-api-key; it must not be able to"
+          exit 1
+        fi
+        echo "confirmed: the pipeline identity cannot read the vault's secrets"
+
+  - task: AzureCLI@2
+    displayName: "Assert the ${{ parameters.environment }} alert destination is live"
+    inputs:
+      azureSubscription: ${{ parameters.serviceConnection }}
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        # Alert rules are configuration; this is the one part of the chain that
+        # fails silently. A receiver whose address was never confirmed, or whose
+        # mailbox starts rejecting, reports as not enabled while every rule around
+        # it still looks healthy — and an alert firing into a void is worse than no
+        # alert, because it buys confidence nobody has earned. Whether a threshold
+        # would catch a real fault cannot be asserted without causing one, so this
+        # checks the part that can be: that there is somewhere for an alert to go.
+        status="$(az monitor action-group show \
+                    --resource-group "rg-parcelquote-${{ parameters.environment }}-uks-01" \
+                    --name "ag-parcelquote-${{ parameters.environment }}-uks-01" \
+                    --query "emailReceivers[?name=='owner'].status | [0]" -o tsv)"
+        if [ "$status" != "Enabled" ]; then
+          echo "##vso[task.logissue type=error]alert email receiver is '$status', not Enabled; alerts would go nowhere"
+          exit 1
+        fi
+        echo "confirmed: the alert email receiver is enabled"

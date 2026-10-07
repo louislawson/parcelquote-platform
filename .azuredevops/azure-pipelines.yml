@@ -155,15 +155,27 @@ stages:
               terraform fmt -check -diff -recursive infra
             displayName: "Check formatting across infra"
 
+          # Discovered rather than listed. The previous version named two directories, and when
+          # infra/envs/prod arrived it was validated by nothing — the build passed while
+          # checking none of the configuration the change was about. Anything holding a
+          # backend block or a provider block is a root configuration and belongs here; the
+          # shared module is covered through the roots that call it.
           - script: |
               set -euo pipefail
-              for dir in infra/bootstrap infra/envs/dev; do
+              mapfile -t dirs < <(find infra -name providers.tf -printf '%h\n' | sort)
+              if [ "${#dirs[@]}" -eq 0 ]; then
+                echo "##vso[task.logissue type=error]no root configurations found under infra"
+                exit 1
+              fi
+              printf 'validating %d configurations:\n' "${#dirs[@]}"
+              printf '  %s\n' "${dirs[@]}"
+              for dir in "${dirs[@]}"; do
                 echo "--- $dir"
                 terraform -chdir="$dir" init -backend=false -input=false
                 terraform -chdir="$dir" validate
                 tflint --chdir="$dir"
               done
-            displayName: "Validate and lint each module"
+            displayName: "Validate and lint each configuration"
 
           - script: |
               set -euo pipefail
@@ -249,85 +261,80 @@ stages:
                       FQDN="$(terraform -chdir=infra/envs/dev output -raw app_fqdn)"
                       echo "##vso[task.setvariable variable=APP_FQDN]$FQDN"
                 - task: PublishPipelineArtifact@1
-                  displayName: "Publish the plan for review"
+                  displayName: "Publish the dev plan for review"
                   condition: succeededOrFailed()
                   inputs:
                     targetPath: "$(Build.ArtifactStagingDirectory)"
-                    artifact: "terraform-plan"
+                    artifact: "terraform-plan-dev"
                     publishLocation: "pipeline"
-                - script: |
-                    set -euo pipefail
-                    if [ -z "${APP_FQDN:-}" ]; then
-                      echo "##vso[task.logissue type=error]APP_FQDN is empty - the apply step did not set it"
-                      exit 1
-                    fi
+                - template: templates/deploy-assertions.yml
+                  parameters:
+                    environment: dev
+                    serviceConnection: "azure-parcelquote-dev"
 
-                    TAG="${BUILD_SOURCEVERSION:0:7}"
-                    BASE="https://${APP_FQDN}"
-                    RETRY=(--retry 10 --retry-all-errors --retry-delay 5 --max-time 20)
-
-                    echo "Smoke testing $BASE, expecting $TAG"
-
-                    echo "healthz: $(curl -fsS "${RETRY[@]}" "$BASE/healthz")"
-
-                    # Traffic reaches the new revision a moment after apply returns, so
-                    # poll rather than asserting once.
-                    sha=""
-                    for attempt in $(seq 1 12); do
-                      sha="$(curl -fsS --max-time 15 "$BASE/version" | jq -r '.git_sha' || true)"
-                      [ "$sha" = "$TAG" ] && break
-                      echo "attempt $attempt: git_sha=${sha:-<no response>}"
-                      sleep 5
-                    done
-
-                    if [ "$sha" != "$TAG" ]; then
-                      echo "##vso[task.logissue type=error]/version returned git_sha=$sha, expected $TAG"
-                      exit 1
-                    fi
-
-                    echo "$APP_FQDN is serving $TAG"
-                  displayName: "Smoke test the new revision"
+  # Prod depends on DeployDev rather than on Publish, so dev is prod's canary: the same commit
+  # and the same image have already applied cleanly and passed a smoke test before anyone is
+  # asked to approve. The approval itself is not in this file — it is a check on the Azure
+  # DevOps prod environment, which means a pull request cannot remove it. Every other gate in
+  # this pipeline lives in a file a pull request can edit; this is the only one that does not.
+  #
+  # The stage is duplicated from DeployDev rather than shared through a template, deliberately.
+  # From the traffic-shifting work onwards prod gains multi-revision mode, weighted traffic and
+  # a rollback path that dev does not get, so the two diverge. What they do share is the three
+  # assertions, which are in templates/deploy-assertions.yml.
+  - stage: DeployProd
+    displayName: "Deploy to prod"
+    dependsOn: DeployDev
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    lockBehavior: runLatest
+    jobs:
+      - deployment: Prod
+        displayName: "Container app"
+        environment: prod
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - template: templates/install-terraform-tools.yml
                 - task: AzureCLI@2
-                  displayName: "Assert the pipeline identity cannot read the secret"
+                  displayName: "Plan and apply the prod environment"
+                  env:
+                    ARM_OIDC_REQUEST_TOKEN: $(System.AccessToken)
+                    TF_VAR_owner: $(OWNER)
                   inputs:
-                    azureSubscription: "azure-parcelquote-dev"
+                    azureSubscription: "azure-parcelquote-prod"
                     scriptType: bash
                     scriptLocation: inlineScript
                     inlineScript: |
                       set -euo pipefail
-                      # Contributor on the resource group is a control-plane role: under RBAC
-                      # authorization it grants no data-plane access to secret values, and it
-                      # cannot create the role assignment that would. This asserts that rather
-                      # than assuming it, so the day someone grants this identity Key Vault
-                      # Secrets User to fix something unrelated, the build says so.
-                      if az keyvault secret show \
-                           --vault-name "kv-parcelquote-dev-uks" \
-                           --name "quote-api-key" -o none 2>/dev/null; then
-                        echo "##vso[task.logissue type=error]the pipeline identity can read quote-api-key; it must not be able to"
-                        exit 1
-                      fi
-                      echo "confirmed: the pipeline identity cannot read the vault's secrets"
-                - task: AzureCLI@2
-                  displayName: "Assert the alert destination is live"
+                      export ARM_CLIENT_ID="$AZURESUBSCRIPTION_CLIENT_ID"
+                      export ARM_TENANT_ID="$AZURESUBSCRIPTION_TENANT_ID"
+                      export ARM_ADO_PIPELINE_SERVICE_CONNECTION_ID="$AZURESUBSCRIPTION_SERVICE_CONNECTION_ID"
+                      export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+                      export ARM_USE_OIDC=true
+                      export ARM_USE_CLI=false
+                      # The same tag dev just deployed. Prod promotes rather than builds, and
+                      # its identity holds no AcrPush, so a tag this run did not publish cannot
+                      # be made to exist from here.
+                      TAG="${BUILD_SOURCEVERSION:0:7}"
+                      terraform -chdir=infra/envs/prod init -input=false
+                      terraform -chdir=infra/envs/prod plan -input=false -lock-timeout=5m \
+                        -var-file=prod.tfvars -var "image_tag=$TAG" -out=tfplan
+                      terraform -chdir=infra/envs/prod show -no-color tfplan > "$BUILD_ARTIFACTSTAGINGDIRECTORY/plan.txt"
+                      terraform -chdir=infra/envs/prod apply -input=false -lock-timeout=5m tfplan
+                      FQDN="$(terraform -chdir=infra/envs/prod output -raw app_fqdn)"
+                      echo "##vso[task.setvariable variable=APP_FQDN]$FQDN"
+                # A distinct artifact name from dev's. Two stages publishing one name collide,
+                # and the failure would land after prod had already applied.
+                - task: PublishPipelineArtifact@1
+                  displayName: "Publish the prod plan for review"
+                  condition: succeededOrFailed()
                   inputs:
-                    azureSubscription: "azure-parcelquote-dev"
-                    scriptType: bash
-                    scriptLocation: inlineScript
-                    inlineScript: |
-                      set -euo pipefail
-                      # Alert rules are configuration; this is the one part of the chain that
-                      # fails silently. A receiver whose address was never confirmed, or whose
-                      # mailbox starts rejecting, reports as not enabled while every rule around
-                      # it still looks healthy — and an alert firing into a void is worse than no
-                      # alert, because it buys confidence nobody has earned. Whether a threshold
-                      # would catch a real fault cannot be asserted without causing one, so this
-                      # checks the part that can be: that there is somewhere for an alert to go.
-                      status="$(az monitor action-group show \
-                                  --resource-group "rg-parcelquote-dev-uks-01" \
-                                  --name "ag-parcelquote-dev-uks-01" \
-                                  --query "emailReceivers[?name=='owner'].status | [0]" -o tsv)"
-                      if [ "$status" != "Enabled" ]; then
-                        echo "##vso[task.logissue type=error]alert email receiver is '$status', not Enabled; alerts would go nowhere"
-                        exit 1
-                      fi
-                      echo "confirmed: the alert email receiver is enabled"
+                    targetPath: "$(Build.ArtifactStagingDirectory)"
+                    artifact: "terraform-plan-prod"
+                    publishLocation: "pipeline"
+                - template: templates/deploy-assertions.yml
+                  parameters:
+                    environment: prod
+                    serviceConnection: "azure-parcelquote-prod"
