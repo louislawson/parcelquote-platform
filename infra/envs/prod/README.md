@@ -43,15 +43,24 @@ Less than you would expect, and the differences are worth knowing precisely.
 | Service connection | `azure-parcelquote-dev` | `azure-parcelquote-prod` |
 | Registry access | `AcrPull` and `AcrPush` | **`AcrPull` only** |
 | Operator access to the vault's secrets | `Key Vault Secrets Officer` | **none** |
+| Revision mode | `Single` | **`Multiple`** |
 
-The registry and vault rows are the two that matter. Prod's pipeline identity cannot push an
-image, because prod promotes a tag dev already built rather than building its own. And no human
-holds data-plane access to prod's vault: the key was written through a grant that was added and
-removed in the same session, so the only thing that can read it is the container app's managed
+The registry and vault rows are the two that matter for access. Prod's pipeline identity cannot
+push an image, because prod promotes a tag dev already built rather than building its own. And no
+human holds data-plane access to prod's vault: the key was written through a grant that was added
+and removed in the same session, so the only thing that can read it is the container app's managed
 identity. Both are enforced by allow-lists in bootstrap, not by convention here.
 
-Everything else — alert thresholds, the availability test's location and timeout, scale to
-zero, revision mode, probe configuration — is identical, because it comes from the module.
+The revision mode row is the one that changes behaviour rather than access, and it is the only
+input that makes this environment do something dev does not. Dev lets Azure deactivate the
+previous revision as soon as the new one is ready. Prod keeps it running, which is what allows a
+bad deployment to be undone by moving traffic instead of deploying again — and what makes
+revisions accumulate. Its revision also carries a `green` label, giving it a second hostname that
+reaches that revision whatever share of traffic it holds; `terraform output candidate_fqdn`
+prints it.
+
+Everything else — alert thresholds, the availability test's location and timeout, scale to zero,
+probe configuration — is identical, because it comes from the module.
 
 ## This environment scales to zero
 
@@ -137,3 +146,16 @@ variable is pinned by a `validation` block for exactly that reason.
 **The approval timing out is a silent pass.** Azure DevOps marks a timed-out approval as
 *skipped*, not failed, so the build goes green with prod never deployed. The timeout is left at
 the 30-day default to make that effectively impossible rather than merely unlikely.
+
+**Revisions accumulate here and nothing prunes them.** In `Multiple` mode no revision is
+deactivated unless something deactivates it, and nothing does — so prod gains one active
+revision per merge. They cost nothing, because billing follows replicas and an idle revision has
+none, and `max_inactive_revisions` never applies to a revision that does not go inactive. The
+real limit is Azure's own ceiling of 100 revisions with the oldest purged, and nothing reports
+the count, so it is worth a look rather than a trust.
+
+**A revision suffix is spent for the life of the app.** It is the short commit SHA, which makes
+rolling back a traffic shift rather than a redeployment of the old tag — that suffix cannot be
+used twice. The less obvious consequence: a change to the container template that arrives without
+a new commit cannot be applied at all. Recreating Application Insights is the realistic way to
+meet this, and the error will name a duplicate suffix rather than the cause.
