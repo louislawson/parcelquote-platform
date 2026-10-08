@@ -33,6 +33,48 @@ variable "image_tag" {
   description = "Tag to run, normally the short commit SHA the pipeline built. The only input that changes between deployments, and changing it creates a new revision."
 }
 
+# No default, although Single would be a reasonable one. Which revision mode an environment runs
+# in decides whether a bad deployment can be undone by shifting traffic or only by deploying
+# again, so it belongs where someone reading that environment's configuration will see it rather
+# than inherited silently from here.
+variable "revision_mode" {
+  type        = string
+  description = "Single or Multiple. Multiple is what makes the traffic weights meaningful, and it also stops Azure deactivating the outgoing revision — which is what a rollback shifts traffic back to."
+
+  validation {
+    condition     = contains(["Single", "Multiple"], var.revision_mode)
+    error_message = "revision_mode must be Single or Multiple. Deployment labels is a third mode in preview, but the provider does not offer it."
+  }
+}
+
+variable "stable_revision_suffix" {
+  type        = string
+  description = "Suffix of the revision already serving production, which holds the remaining traffic while the new one is verified. Discovered from the live app by the caller rather than derived from git history, since the previous commit is not the previous deployment if a run was ever skipped. Naming one is what turns a deployment into a blue/green deployment: left empty, the newest revision takes everything as soon as Azure reports it ready."
+  default     = ""
+}
+
+# One number, not two. The provider requires the weights to total exactly 100 with no defaults
+# assumed, so the stable revision takes the remainder here instead of being passed its own
+# percentage that could disagree. It also reduces the canary to a list of single values.
+variable "candidate_percentage" {
+  type        = number
+  description = "Share of production traffic sent to the revision this deployment creates. Ignored in Single mode, where the newest revision always takes everything."
+  default     = 100
+
+  validation {
+    condition     = var.candidate_percentage >= 0 && var.candidate_percentage <= 100
+    error_message = "candidate_percentage must be between 0 and 100."
+  }
+
+  # Scoped to Multiple mode as well as to the empty suffix, because Single mode ignores this
+  # value entirely and rejecting it there would fail with a complaint about weights that mode
+  # never writes.
+  validation {
+    condition     = var.revision_mode == "Single" || var.stable_revision_suffix != "" || var.candidate_percentage == 100
+    error_message = "With no stable revision to hold the remainder, candidate_percentage must be 100, or the weights cannot total 100."
+  }
+}
+
 # Built by the caller rather than here, and not only as a style choice. The source tag records
 # which configuration owns the resource, and after this module existed that answer is still the
 # environment directory holding the state — a module cannot know it, and asking for the path as

@@ -56,6 +56,7 @@ the ten resources here are tagged rather than all ten.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
+| candidate\_percentage | Share of production traffic sent to the revision this deployment creates. Ignored in Single mode, where the newest revision always takes everything. | `number` | `100` | no |
 | environment | Environment name, used in every resource name and looked up to find the resource group, identity and vault bootstrap created for it. No validation here deliberately: the guard belongs in the calling configuration, which is the thing tied to one state container. | `string` | n/a | yes |
 | image\_repository | Repository holding the image, without the registry host or a tag. | `string` | n/a | yes |
 | image\_tag | Tag to run, normally the short commit SHA the pipeline built. The only input that changes between deployments, and changing it creates a new revision. | `string` | n/a | yes |
@@ -63,6 +64,8 @@ the ten resources here are tagged rather than all ten.
 | owner | Email address of the person accountable for these resources. Also the action group's alert destination, which is why this is a separate input rather than something read out of tags. | `string` | n/a | yes |
 | project\_app\_service | Workload name used in every resource name. Must match the value bootstrap was applied with. | `string` | n/a | yes |
 | registry\_login\_server | Fully qualified registry host, such as crparcelquoteuks01.azurecr.io. Prefixes the image reference; the app authenticates to it with its managed identity. | `string` | n/a | yes |
+| revision\_mode | Single or Multiple. Multiple is what makes the traffic weights meaningful, and it also stops Azure deactivating the outgoing revision — which is what a rollback shifts traffic back to. | `string` | n/a | yes |
+| stable\_revision\_suffix | Suffix of the revision already serving production, which holds the remaining traffic while the new one is verified. Discovered from the live app by the caller rather than derived from git history, since the previous commit is not the previous deployment if a run was ever skipped. Naming one is what turns a deployment into a blue/green deployment: left empty, the newest revision takes everything as soon as Azure reports it ready. | `string` | `""` | no |
 | tags | Tags applied to every taggable resource. The caller is expected to have merged the environment tag in already. | `map(string)` | n/a | yes |
 
 ## Outputs
@@ -70,8 +73,9 @@ the ten resources here are tagged rather than all ten.
 | Name | Description |
 |------|-------------|
 | app\_fqdn | Stable hostname, serving whichever revisions the traffic weights point at. |
-| latest\_revision\_fqdn | Hostname of the newest revision, reachable regardless of traffic weighting. The smoke test uses this so it asserts against the revision the run produced. |
-| latest\_revision\_name | Name of the newest revision, for correlating container logs and shifting traffic. |
+| candidate\_fqdn | Hostname of the green-labelled revision, reachable whatever share of traffic that revision carries, which is what allows a new revision to be verified before any traffic reaches it. Null in Single mode, where there is no label. |
+| latest\_revision\_fqdn | Hostname of the newest revision as the provider last read it, for reading by hand. Stale by one revision immediately after an apply, so nothing automated should assert against it. |
+| latest\_revision\_name | Name of the newest revision as the provider last read it, for correlating container logs by hand. Stale by one revision immediately after an apply, for the same reason as above. |
 <!-- END_TF_DOCS -->
 
 ## Gotchas

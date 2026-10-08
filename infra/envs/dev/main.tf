@@ -11,6 +11,11 @@ locals {
 # environment it is. The source tag stays "infra/envs/dev" rather than naming the module,
 # because it records which configuration owns the resource and that is still this directory —
 # the module is shared, the state is not.
+#
+# Single revision mode, and not only because prod is the environment worth protecting. Dev's
+# job is to fail fast and cost nothing, and multiple revisions would buy it an extra apply on
+# every merge, revisions that are never deactivated, and a rollback path for a service nobody
+# is depending on.
 module "workload" {
   source = "../../modules/workload"
 
@@ -21,5 +26,6 @@ module "workload" {
   owner                 = var.owner
   project_app_service   = var.project_app_service
   registry_login_server = var.registry_login_server
+  revision_mode         = "Single"
   tags                  = merge(local.common_tags, { environment = var.environment })
 }

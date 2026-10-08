@@ -1,3 +1,51 @@
+# In main.tf rather than the locals.tf HashiCorp's file layout suggests, matching the environment
+# roots, which keep their locals at the top of main.tf too. The split would be defensible in a
+# file this long; having one convention across the repository won.
+locals {
+  # A revision has to be nameable before it exists: a traffic weight names one, and the pipeline
+  # builds a hostname for another. Left unset the service generates a hash, which could only be
+  # read back afterwards — and reading it back is exactly what the provider gets wrong, since
+  # latest_revision_name is one revision stale immediately after an apply. The v is not
+  # decoration: Azure requires a suffix to start with an alphabetic character and roughly three
+  # short SHAs in eight start with a digit.
+  revision_suffix = "v${var.image_tag}"
+
+  # Built as one list rather than written as blocks because traffic_weight is an ordered list in
+  # the provider schema, not a set. Two configurations producing the same weights in a different
+  # order would plan a change, so the order has to come from somewhere deliberate.
+  #
+  # Two shapes, and which one applies turns on whether a stable revision has been named rather
+  # than on the revision mode. Naming both revisions is what allows a weight to be moved between
+  # them, so that is the blue/green shape. The other shape puts the whole weight on
+  # latest_revision, and that is not just the only thing Single mode can express — it is the
+  # safer answer whenever a revision takes all the traffic without having been verified first.
+  # Azure holds traffic on the outgoing revision until the new one passes its probes, but the
+  # documentation promises that only for latest_revision; a named revision at 100% is not
+  # described as waiting for anything. Once a stable revision exists the candidate arrives at 0%
+  # and is verified before it is promoted, so there is nothing left for that gate to protect.
+  traffic_weights = var.revision_mode == "Multiple" && var.stable_revision_suffix != "" ? [
+    {
+      revision_suffix = local.revision_suffix
+      label           = "green"
+      latest_revision = false
+      percentage      = var.candidate_percentage
+    },
+    {
+      revision_suffix = var.stable_revision_suffix
+      label           = "blue"
+      latest_revision = false
+      percentage      = 100 - var.candidate_percentage
+    },
+    ] : [
+    {
+      revision_suffix = null
+      label           = var.revision_mode == "Multiple" ? "green" : null
+      latest_revision = true
+      percentage      = 100
+    }
+  ]
+}
+
 data "azurerm_resource_group" "rg" {
   name = "rg-${var.project_app_service}-${var.environment}-${var.location_short}-01"
 }
@@ -85,10 +133,16 @@ resource "azurerm_container_app" "ca" {
   name                         = "ca-${var.project_app_service}-${var.environment}-${var.location_short}-01"
   container_app_environment_id = azurerm_container_app_environment.cae_env.id
   resource_group_name          = data.azurerm_resource_group.rg.name
-  revision_mode                = "Single"
-  max_inactive_revisions       = 3
+  revision_mode                = var.revision_mode
   workload_profile_name        = "Consumption"
   tags                         = var.tags
+
+  # Bounds the list of revisions Azure keeps after they go inactive, and nothing else. In
+  # Multiple mode no revision becomes inactive unless something deactivates it, and nothing here
+  # does — so this is inert wherever revision_mode is Multiple, and it is not what limits how
+  # many revisions such an environment accumulates. That limit is Azure's own ceiling of one
+  # hundred, oldest purged, and nothing watches the count.
+  max_inactive_revisions = 3
 
   identity {
     type         = "UserAssigned"
@@ -115,14 +169,38 @@ resource "azurerm_container_app" "ca" {
     external_enabled           = true
     target_port                = 8000
     allow_insecure_connections = false
-    traffic_weight {
-      latest_revision = true
-      percentage      = 100
+
+    # A label gives a revision its own hostname, app---label rather than app, and that hostname
+    # is reachable whatever weight the revision carries. That is what makes verifying a revision
+    # before it serves anyone possible at all. The labels here do not swap roles between
+    # deployments the way Microsoft's blue/green guidance has them do: green is always the
+    # revision arriving and blue always the one it replaced, so the hostname to test is the same
+    # string every time. Alternating would mean the configuration had to know which colour is
+    # currently live, which is state that would have to live somewhere outside it.
+    dynamic "traffic_weight" {
+      for_each = local.traffic_weights
+      content {
+        revision_suffix = traffic_weight.value.revision_suffix
+        label           = traffic_weight.value.label
+        latest_revision = traffic_weight.value.latest_revision
+        percentage      = traffic_weight.value.percentage
+      }
     }
   }
 
   template {
     min_replicas = 0
+
+    # Changing this is what creates a revision; everything else in this block rides along. It
+    # must be unique for the life of the app, which is why rolling back is a traffic shift and
+    # can never be a redeployment of the previous tag — that suffix is already spent.
+    #
+    # The same rule has a second consequence, less obvious and worth knowing before it is met:
+    # because the value comes from the commit, any change to this block that does not arrive
+    # with a new commit cannot be applied at all. The realistic trigger is Application Insights
+    # being recreated, which rewrites the connection string below. It fails loudly on apply
+    # rather than quietly, but the error names a duplicate suffix and not the cause.
+    revision_suffix = local.revision_suffix
 
     container {
       name   = "api"
