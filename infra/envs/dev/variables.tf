@@ -38,3 +38,19 @@ variable "image_tag" {
   type        = string
   description = "Tag to run, normally the short commit SHA the pipeline built. The only input that changes between deployments, and changing it creates a new revision."
 }
+
+# The two inputs below exist so that one pipeline template can apply either environment. They
+# are passed to the module on every run and ignored by it in Single revision mode, where the
+# newest revision always takes all the traffic. Declaring them in both environments keeps the
+# two directories symmetric, which is the same reason their tfvars files are identical.
+variable "stable_revision_suffix" {
+  type        = string
+  description = "Suffix of the revision already serving production, discovered from the live app by the pipeline rather than held in the repository. Naming one is what turns a deployment into a blue/green deployment; left empty, the newest revision takes everything once Azure reports it ready."
+  default     = ""
+}
+
+variable "candidate_percentage" {
+  type        = number
+  description = "Share of production traffic sent to the revision this deployment creates. The pipeline passes 0, verifies the revision on its own hostname, then passes 100."
+  default     = 100
+}
