@@ -1,0 +1,108 @@
+# The Terraform half of a deploy stage, extracted when prod gained a second apply. Dev calls it
+# once, prod twice, and the canary work will make that four times — at which point the same
+# fifteen lines copied per traffic split is a routing bug waiting for someone to edit one copy
+# and not the others.
+#
+# The stages themselves stay separate, which is a different question and was settled when prod
+# was added: they diverge in what they verify and in what they do between applies. This shares
+# only the part that does not diverge, the same way templates/deploy-assertions.yml does.
+
+parameters:
+  - name: environment
+    type: string
+  # Azure DevOps configuration rather than an Azure resource, so it does not follow the resource
+  # naming pattern and deriving it from the environment would couple two conventions that are
+  # maintained in different places. Same reasoning as templates/deploy-assertions.yml.
+  - name: serviceConnection
+    type: string
+  # Passed rather than composed, because the two prod applies differ in what they are for and
+  # not just in a number, and the step name is the first thing read when a deploy goes wrong.
+  - name: displayName
+    type: string
+  # Each apply writes its own plan into the one artifact the stage publishes. Two applies
+  # writing a single filename would leave the artifact holding whichever ran last, and the plan
+  # worth reading is usually the first.
+  - name: planFile
+    type: string
+    default: plan.txt
+  # Ignored by the module in Single revision mode, where the newest revision always takes
+  # everything, so the default is what a single-revision environment wants and prod overrides it
+  # on each of its two applies.
+  - name: candidatePercentage
+    type: string
+    default: "100"
+  # A condition cannot be put on a template reference, only on a step, so a caller that needs
+  # one has to pass it through. Prod's staged apply is the only caller that does: it is skipped
+  # when there is no stable revision to hold traffic, or when this commit is already serving.
+  - name: condition
+    type: string
+    default: succeeded()
+
+steps:
+  - task: AzureCLI@2
+    displayName: "${{ parameters.displayName }}"
+    condition: ${{ parameters.condition }}
+    env:
+      ARM_OIDC_REQUEST_TOKEN: $(System.AccessToken)
+      TF_VAR_owner: $(OWNER)
+    inputs:
+      azureSubscription: "${{ parameters.serviceConnection }}"
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -euo pipefail
+        export ARM_CLIENT_ID="$AZURESUBSCRIPTION_CLIENT_ID"
+        export ARM_TENANT_ID="$AZURESUBSCRIPTION_TENANT_ID"
+        export ARM_ADO_PIPELINE_SERVICE_CONNECTION_ID="$AZURESUBSCRIPTION_SERVICE_CONNECTION_ID"
+        export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+        export ARM_USE_OIDC=true
+        export ARM_USE_CLI=false
+
+        DIR="infra/envs/${{ parameters.environment }}"
+        TAG="${BUILD_SOURCEVERSION:0:7}"
+
+        # Set by the discovery step where there is one, and empty everywhere else — which is
+        # what a single-revision environment wants. With no stable revision named, the module
+        # puts the whole weight on latest_revision, and Azure holds traffic on the outgoing
+        # revision until the new one passes its probes.
+        STABLE="${STABLE_SUFFIX:-}"
+
+        terraform -chdir="$DIR" init -input=false
+        terraform -chdir="$DIR" plan -input=false -lock-timeout=5m \
+          -var-file="${{ parameters.environment }}.tfvars" \
+          -var "image_tag=$TAG" \
+          -var "stable_revision_suffix=$STABLE" \
+          -var "candidate_percentage=${{ parameters.candidatePercentage }}" \
+          -out=tfplan
+        terraform -chdir="$DIR" show -no-color tfplan > "$BUILD_ARTIFACTSTAGINGDIRECTORY/${{ parameters.planFile }}"
+        terraform -chdir="$DIR" apply -input=false -lock-timeout=5m tfplan
+
+        FQDN="$(terraform -chdir="$DIR" output -raw app_fqdn)"
+        echo "##vso[task.setvariable variable=APP_FQDN]$FQDN"
+
+        # Absent, not empty, wherever no traffic weight carries a label. A null output is not
+        # recorded in state at all — it is not planned, not stored and not listed — so this
+        # fails with "could not be found in the state file" in a single-revision environment
+        # rather than returning a null. Measured: dev's state holds three outputs and prod's
+        # four, from the same configuration.
+        #
+        # The failure is therefore swallowed and the variable simply goes unset. Nothing is
+        # hidden by that: the step that needs the hostname checks for it and fails naming it,
+        # which is a better place to find out than halfway through an output expression.
+        CANDIDATE="$(terraform -chdir="$DIR" output -raw candidate_fqdn 2>/dev/null || true)"
+        if [ -n "$CANDIDATE" ]; then
+          echo "##vso[task.setvariable variable=CANDIDATE_FQDN]$CANDIDATE"
+          echo "candidate hostname: $CANDIDATE"
+        fi
+
+        # Half of the traffic-shifting evidence, for the price of one call. A plan says what was
+        # asked for; this says what Azure did with it.
+        #
+        # Resource names are literal here, as in templates/deploy-assertions.yml, and this is
+        # now the third place they are written out — the price of reading Azure rather than
+        # state. az rest and a pinned api-version rather than az containerapp, which is an
+        # extension this pipeline has never installed and which would try to prompt for it.
+        echo "traffic weights after this apply:"
+        az rest --method get \
+          --url "https://management.azure.com/subscriptions/$ARM_SUBSCRIPTION_ID/resourceGroups/rg-parcelquote-${{ parameters.environment }}-uks-01/providers/Microsoft.App/containerApps/ca-parcelquote-${{ parameters.environment }}-uks-01?api-version=2026-07-01" \
+          --query "properties.configuration.ingress.traffic" -o json

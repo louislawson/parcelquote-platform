@@ -5,10 +5,14 @@ rather than in this repository.
 
 ## Files
 
-- `azure-pipelines.yml` — the pipeline: validate, publish, deploy to dev
+- `azure-pipelines.yml` — the pipeline: validate, publish, deploy to dev, deploy to prod
 - `templates/install-terraform-tools.yml` — version-pinned installs of Terraform and
   tflint, each checksummed, with Terraform's checksums verified against a pinned
   HashiCorp signing key
+- `templates/terraform-apply.yml` — one plan and apply of one environment at one traffic
+  split. Dev calls it once and prod twice, which is why it is a template
+- `templates/deploy-assertions.yml` — the three checks that follow every apply: the smoke
+  test, and the two standing assertions about the Key Vault grant and the alert receiver
 
 ## What the pipeline does
 
@@ -17,10 +21,32 @@ Dockerfile's test target, which runs ruff and pytest, builds the runtime target,
 checks formatting, validates and lints every Terraform configuration. Nothing in this
 stage touches Azure, so it runs with no credentials.
 
-**Publish** and **Deploy to dev** run only on main. Publish builds the runtime image with
-the short commit SHA as both its tag and its `GIT_SHA` build argument, and pushes it to
-the container registry. Deploy applies `infra/envs/dev`, then smoke tests the result by
-polling `GET /version` until it reports the commit that built it.
+**Publish**, **Deploy to dev** and **Deploy to prod** run only on main. Publish builds the
+runtime image with the short commit SHA as both its tag and its `GIT_SHA` build argument,
+and pushes it to the container registry. Deploy to dev applies `infra/envs/dev`, then smoke
+tests the result by polling `GET /version` until it reports the commit that built it.
+
+**Deploy to prod** depends on dev rather than on Publish, so dev is prod's canary: the same
+commit and image have already applied and passed a smoke test before anyone is asked to
+approve. Prod promotes that tag rather than building its own, and its identity holds no
+`AcrPush`, so a tag this run did not publish cannot be made to exist from there.
+
+Prod deploys one revision at a time but keeps the previous one running, which is what lets a
+bad release be undone by moving traffic instead of deploying again. The stage therefore
+applies twice. It first reads the live app to find which revision is serving, then applies
+with the new revision at **0%** of traffic — created, running, and reachable only on its own
+`---green` hostname. It verifies there that the new revision answers with this commit *and*
+that the production hostname is still answering with the previous one, which is what makes
+the first assertion mean anything. Only then does the second apply move the traffic.
+
+Both plans are published under `terraform-plan-prod`, as `plan-staged.txt` and
+`plan-flip.txt`. A re-run of a build that already deployed is a no-op: the discovery step
+recognises that this commit is already serving, skips the staged apply, and leaves the
+previous revision where a rollback would need it.
+
+If verification fails, the stage fails with the new revision holding no traffic and
+production untouched — safe because the traffic never moved, not because anything rolled
+back. Nothing yet reverts a flip that succeeded and then failed its smoke test.
 
 Authentication to Azure is workload identity federation throughout. There is no stored
 Azure credential in this repository or in the pipeline.
