@@ -16,6 +16,7 @@ only give the two something to drift apart over.
 | [`app/README.md`](app/README.md) | The pricing model, the API and its authentication, local development |
 | [`infra/bootstrap/README.md`](infra/bootstrap/README.md) | The foundational resources, why it runs by hand, what permissions it needs |
 | [`infra/envs/dev/README.md`](infra/envs/dev/README.md) | The dev environment, what it reads rather than creates, and its constraints |
+| [`infra/envs/prod/README.md`](infra/envs/prod/README.md) | The prod environment, how it differs from dev, and why applying it by hand defeats the approval |
 | [`.azuredevops/README.md`](.azuredevops/README.md) | The pipeline, and the configuration that lives in Azure DevOps rather than here |
 
 Each infrastructure README ends with a **Gotchas** section. Read it before editing that
@@ -88,7 +89,10 @@ The pipeline runs these; run them before pushing. From the repository root:
 terraform fmt -check -diff -recursive infra
 ```
 
-Per configuration, for each of `infra/bootstrap` and `infra/envs/dev`:
+Per configuration, for every directory under `infra` holding a `providers.tf` — today
+`infra/bootstrap`, `infra/envs/dev` and `infra/envs/prod`. Phrased that way rather than as a
+list because it is how the pipeline finds them, so a new environment is covered without this
+being edited:
 
 ```bash
 terraform -chdir=infra/envs/dev init -backend=false -input=false && terraform -chdir=infra/envs/dev validate
