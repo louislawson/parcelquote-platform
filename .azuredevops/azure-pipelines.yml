@@ -235,31 +235,11 @@ stages:
               steps:
                 - checkout: self
                 - template: templates/install-terraform-tools.yml
-                - task: AzureCLI@2
-                  displayName: "Plan and apply the dev environment"
-                  env:
-                    ARM_OIDC_REQUEST_TOKEN: $(System.AccessToken)
-                    TF_VAR_owner: $(OWNER)
-                  inputs:
-                    azureSubscription: "azure-parcelquote-dev"
-                    scriptType: bash
-                    scriptLocation: inlineScript
-                    inlineScript: |
-                      set -euo pipefail
-                      export ARM_CLIENT_ID="$AZURESUBSCRIPTION_CLIENT_ID"
-                      export ARM_TENANT_ID="$AZURESUBSCRIPTION_TENANT_ID"
-                      export ARM_ADO_PIPELINE_SERVICE_CONNECTION_ID="$AZURESUBSCRIPTION_SERVICE_CONNECTION_ID"
-                      export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
-                      export ARM_USE_OIDC=true
-                      export ARM_USE_CLI=false
-                      TAG="${BUILD_SOURCEVERSION:0:7}"
-                      terraform -chdir=infra/envs/dev init -input=false
-                      terraform -chdir=infra/envs/dev plan -input=false -lock-timeout=5m \
-                        -var-file=dev.tfvars -var "image_tag=$TAG" -out=tfplan
-                      terraform -chdir=infra/envs/dev show -no-color tfplan > "$BUILD_ARTIFACTSTAGINGDIRECTORY/plan.txt"
-                      terraform -chdir=infra/envs/dev apply -input=false -lock-timeout=5m tfplan
-                      FQDN="$(terraform -chdir=infra/envs/dev output -raw app_fqdn)"
-                      echo "##vso[task.setvariable variable=APP_FQDN]$FQDN"
+                - template: templates/terraform-apply.yml
+                  parameters:
+                    environment: dev
+                    serviceConnection: "azure-parcelquote-dev"
+                    displayName: "Plan and apply the dev environment"
                 - task: PublishPipelineArtifact@1
                   displayName: "Publish the dev plan for review"
                   condition: succeededOrFailed()
@@ -278,10 +258,12 @@ stages:
   # DevOps prod environment, which means a pull request cannot remove it. Every other gate in
   # this pipeline lives in a file a pull request can edit; this is the only one that does not.
   #
-  # The stage is duplicated from DeployDev rather than shared through a template, deliberately.
-  # From the traffic-shifting work onwards prod gains multi-revision mode, weighted traffic and
-  # a rollback path that dev does not get, so the two diverge. What they do share is the three
-  # assertions, which are in templates/deploy-assertions.yml.
+  # The stage itself is still not shared with DeployDev through a template, and the prediction
+  # that made that choice has now come true: prod runs multi-revision mode, applies twice, and
+  # verifies a revision between the two, none of which dev does. What they share is every part
+  # that did not diverge — the three assertions in templates/deploy-assertions.yml, and one
+  # plan-and-apply of one environment at one traffic split in templates/terraform-apply.yml,
+  # which dev calls once and this stage calls twice.
   - stage: DeployProd
     displayName: "Deploy to prod"
     dependsOn: DeployDev
@@ -297,36 +279,209 @@ stages:
               steps:
                 - checkout: self
                 - template: templates/install-terraform-tools.yml
+                # Where the blue/green sequence gets its one input that is not in the repository:
+                # which revision production is actually serving. Read from the live app rather
+                # than derived from git, because the previous commit is not the previous
+                # deployment if a run was ever skipped or failed, and rather than from a
+                # Terraform output, because latest_revision_name is one revision stale
+                # immediately after an apply. This read happens before anything is written, so
+                # there is nothing for that race to touch.
                 - task: AzureCLI@2
-                  displayName: "Plan and apply the prod environment"
-                  env:
-                    ARM_OIDC_REQUEST_TOKEN: $(System.AccessToken)
-                    TF_VAR_owner: $(OWNER)
+                  displayName: "Discover the revision prod is serving"
                   inputs:
                     azureSubscription: "azure-parcelquote-prod"
                     scriptType: bash
                     scriptLocation: inlineScript
                     inlineScript: |
                       set -euo pipefail
-                      export ARM_CLIENT_ID="$AZURESUBSCRIPTION_CLIENT_ID"
-                      export ARM_TENANT_ID="$AZURESUBSCRIPTION_TENANT_ID"
-                      export ARM_ADO_PIPELINE_SERVICE_CONNECTION_ID="$AZURESUBSCRIPTION_SERVICE_CONNECTION_ID"
-                      export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
-                      export ARM_USE_OIDC=true
-                      export ARM_USE_CLI=false
-                      # The same tag dev just deployed. Prod promotes rather than builds, and
-                      # its identity holds no AcrPush, so a tag this run did not publish cannot
-                      # be made to exist from here.
+
+                      # Literal names, as in templates/deploy-assertions.yml and for the same reason: this reads
+                      # Azure rather than state, so it cannot interpolate the variables Terraform builds names from.
+                      RG="rg-parcelquote-prod-uks-01"
+                      APP="ca-parcelquote-prod-uks-01"
+                      API="2026-07-01"
+
                       TAG="${BUILD_SOURCEVERSION:0:7}"
-                      terraform -chdir=infra/envs/prod init -input=false
-                      terraform -chdir=infra/envs/prod plan -input=false -lock-timeout=5m \
-                        -var-file=prod.tfvars -var "image_tag=$TAG" -out=tfplan
-                      terraform -chdir=infra/envs/prod show -no-color tfplan > "$BUILD_ARTIFACTSTAGINGDIRECTORY/plan.txt"
-                      terraform -chdir=infra/envs/prod apply -input=false -lock-timeout=5m tfplan
-                      FQDN="$(terraform -chdir=infra/envs/prod output -raw app_fqdn)"
-                      echo "##vso[task.setvariable variable=APP_FQDN]$FQDN"
-                # A distinct artifact name from dev's. Two stages publishing one name collide,
-                # and the failure would land after prod had already applied.
+                      printf '%s' "$TAG" | grep -Eq '^[0-9a-f]{7}$' || {
+                        echo "##vso[task.logissue type=error]expected a seven-character short SHA, got '$TAG'"
+                        exit 1
+                      }
+                      CANDIDATE="v$TAG"
+
+                      SUB="$(az account show --query id -o tsv)"
+                      URL="https://management.azure.com/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.App/containerApps/$APP?api-version=$API"
+
+                      # az rest and a pinned api-version rather than az containerapp, which is an extension this
+                      # pipeline has never used. An absent extension makes the CLI try to prompt, and a prompt in a
+                      # non-interactive script dies with EOF and a traceback that buries the cause. Pinning the API
+                      # version also matches how every other version in this pipeline is handled.
+                      #
+                      # tr -d '\r' because the CLI terminates tsv rows with CRLF on some platforms, and a weight of
+                      # "100\r" is numerically fine and textually not, which is the worst kind of difference.
+                      ROWS="$(az rest --method get --url "$URL" \
+                        --query "properties.configuration.ingress.traffic[].[revisionName, weight]" -o tsv | tr -d '\r')"
+
+                      echo "live traffic weights:"
+                      printf '%s\n' "$ROWS" | sed 's/^/  /'
+
+                      STABLE=""
+                      CANDIDATE_WEIGHT=""
+                      COUNT=0
+                      TOTAL=0
+                      while IFS=$'\t' read -r name weight; do
+                        [ -n "$weight" ] || continue
+                        COUNT=$((COUNT + 1))
+                        TOTAL=$((TOTAL + weight))
+
+                        # A weight carrying latestRevision names no revision, and --query renders that JSON null as
+                        # the literal None rather than an empty field. It cannot be mistaken for a real suffix, since
+                        # Azure requires those to be lower case, but it does have to be recognised.
+                        [ "$name" = "None" ] && continue
+
+                        suffix="${name#"$APP"--}"
+                        if [ "$suffix" = "$CANDIDATE" ]; then
+                          CANDIDATE_WEIGHT="$weight"
+                        else
+                          STABLE="$suffix"
+                        fi
+                      done <<<"$ROWS"
+
+                      # Two is the most this derivation can read: a candidate, and one revision holding the
+                      # remainder. A third means something wrote weights that this stage did not - a hand edit, or a
+                      # canary caught mid-rollout once that exists - and guessing which of three is the stable one is
+                      # how traffic ends up on the wrong revision.
+                      if [ "$COUNT" -gt 2 ]; then
+                        echo "##vso[task.logissue type=error]$COUNT traffic weights, expected at most 2"
+                        exit 1
+                      fi
+                      if [ "$TOTAL" -ne 100 ]; then
+                        echo "##vso[task.logissue type=error]live weights total $TOTAL, not 100"
+                        exit 1
+                      fi
+
+                      # Nothing named a revision, so the only weight is on latestRevision - the shape this app was
+                      # left in before blue/green existed. Resolve it to the revision it actually points at rather
+                      # than special-casing the first run.
+                      if [ -z "$STABLE" ]; then
+                        LATEST="$(az rest --method get --url "$URL" \
+                          --query properties.latestRevisionName -o tsv | tr -d '\r')"
+                        LATEST="${LATEST#"$APP"--}"
+                        if [ -n "$LATEST" ] && [ "$LATEST" != "$CANDIDATE" ]; then
+                          STABLE="$LATEST"
+                        fi
+                      fi
+
+                      # The guard that matters. Re-running a build whose deployment already finished finds the
+                      # candidate holding 100 per cent, and reading the stable revision as "whatever holds the
+                      # traffic" would make it the candidate as well: two weights naming one revision, and a first
+                      # apply that sends nothing to the revision production is serving. Taking the stable revision as
+                      # the entry that is not the candidate makes a re-run plan no changes instead, and keeps the
+                      # revision a rollback would need.
+                      STAGED=true
+                      if [ "$CANDIDATE_WEIGHT" = "100" ]; then
+                        STAGED=false
+                        echo "$CANDIDATE already holds 100 per cent - this commit has been deployed before"
+                      fi
+
+                      # No stable revision means nothing can hold the remainder while the candidate is verified, so
+                      # there is no 0 per cent step to take. The module puts that weight on latest_revision, which is
+                      # where Azure's own readiness gate applies. Only reachable in an environment with no revisions.
+                      if [ -z "$STABLE" ]; then
+                        STAGED=false
+                        echo "no stable revision to hold traffic - the candidate goes straight to 100 per cent"
+                      fi
+
+                      echo "candidate:      $CANDIDATE"
+                      echo "stable:         ${STABLE:-<none>}"
+                      echo "staged rollout: $STAGED"
+
+                      echo "##vso[task.setvariable variable=STABLE_SUFFIX]$STABLE"
+                      echo "##vso[task.setvariable variable=STAGED_ROLLOUT]$STAGED"
+                - template: templates/terraform-apply.yml
+                  parameters:
+                    environment: prod
+                    serviceConnection: "azure-parcelquote-prod"
+                    displayName: "Apply prod with the candidate at 0% traffic"
+                    planFile: plan-staged.txt
+                    candidatePercentage: "0"
+                    condition: and(succeeded(), eq(variables['STAGED_ROLLOUT'], 'true'))
+                # Acceptance check 3's evidence, and the only step in this stage that can tell a
+                # working revision from a broken one before any traffic reaches it. Both halves
+                # are asserted here rather than in two steps so the proof is a single log entry:
+                # the candidate is serving the commit this build produced, and production is
+                # still serving the one before it.
+                - script: |
+                    set -euo pipefail
+
+                    # Both hostnames are set by the staged apply with task.setvariable, which Azure DevOps also
+                    # exports to later steps as environment variables - the same contract templates/deploy-
+                    # assertions.yml already relies on for APP_FQDN. Fail loudly on an empty one rather than
+                    # testing nothing, which is what a curl against https:// would quietly do.
+                    if [ -z "${CANDIDATE_FQDN:-}" ] || [ -z "${APP_FQDN:-}" ]; then
+                      echo "##vso[task.logissue type=error]CANDIDATE_FQDN or APP_FQDN is empty - the staged apply did not set it"
+                      exit 1
+                    fi
+
+                    TAG="${BUILD_SOURCEVERSION:0:7}"
+                    RETRY=(--retry 10 --retry-all-errors --retry-delay 5 --max-time 20)
+
+                    # The candidate has never served a request, so this pays the full cold start: 48 seconds,
+                    # measured twice. The retry budget deliberately outlives its own --max-time, so the first two
+                    # attempts time out and the third lands warm. Both numbers look generous in isolation and
+                    # neither is spare.
+                    echo "candidate: https://$CANDIDATE_FQDN"
+                    echo "healthz: $(curl -fsS "${RETRY[@]}" "https://$CANDIDATE_FQDN/healthz")"
+
+                    sha=""
+                    for attempt in $(seq 1 12); do
+                      sha="$(curl -fsS --max-time 15 "https://$CANDIDATE_FQDN/version" | jq -r '.git_sha' || true)"
+                      [ "$sha" = "$TAG" ] && break
+                      echo "attempt $attempt: git_sha=${sha:-<no response>}"
+                      sleep 5
+                    done
+
+                    if [ "$sha" != "$TAG" ]; then
+                      echo "##vso[task.logissue type=error]the candidate returned git_sha=$sha, expected $TAG"
+                      exit 1
+                    fi
+                    echo "the candidate is serving $TAG while holding no traffic"
+
+                    # The half that makes the half above mean something. If production were already on the new
+                    # revision, the check above would have passed against the very revision it exists to protect,
+                    # and the run would look like a successful blue/green while having isolated nothing.
+                    live="$(curl -fsS "${RETRY[@]}" "https://$APP_FQDN/version" | jq -r '.git_sha')"
+                    if [ "$live" = "$TAG" ]; then
+                      echo "##vso[task.logissue type=error]production is already serving $TAG - the candidate was not isolated"
+                      exit 1
+                    fi
+
+                    # A stable suffix is v followed by the commit it was built from, so the value production ought
+                    # to be returning is derivable rather than merely different. Assert it only when the suffix has
+                    # that shape: a revision Azure named itself carries no commit, and failing on a derivation that
+                    # was never going to work would say nothing about this deployment.
+                    if printf '%s' "${STABLE_SUFFIX:-}" | grep -Eq '^v[0-9a-f]{7}$'; then
+                      expected="${STABLE_SUFFIX#v}"
+                      if [ "$live" != "$expected" ]; then
+                        echo "##vso[task.logissue type=error]production returned git_sha=$live, expected $expected from $STABLE_SUFFIX"
+                        exit 1
+                      fi
+                      echo "production is still serving $expected on $STABLE_SUFFIX"
+                    else
+                      echo "production is serving $live, which is not $TAG; stable suffix ${STABLE_SUFFIX:-<none>} carries no commit to check against"
+                    fi
+                  displayName: "Verify the candidate while prod still serves the old revision"
+                  condition: and(succeeded(), eq(variables['STAGED_ROLLOUT'], 'true'))
+                # Weights live in configuration rather than template, which Azure classifies as an
+                # application-scope change, so this apply creates no revision and costs only its own
+                # init and plan. It runs unconditionally: where the staged apply was skipped this is
+                # the only apply, and the candidate goes straight to 100 per cent.
+                - template: templates/terraform-apply.yml
+                  parameters:
+                    environment: prod
+                    serviceConnection: "azure-parcelquote-prod"
+                    displayName: "Shift all traffic to the new revision"
+                    planFile: plan-flip.txt
+                    candidatePercentage: "100"
                 - task: PublishPipelineArtifact@1
                   displayName: "Publish the prod plan for review"
                   condition: succeededOrFailed()
