@@ -1,0 +1,191 @@
+# Measures the traffic split rather than reading it back. The weights Azure reports are what it
+# was asked for; this is what a caller actually gets, which is the claim worth making and the one
+# the canary exists to support.
+#
+# It works because two things happen to be true of this app. Session affinity is off
+# (stickySessions is null), so distribution is decided per request rather than per client; and
+# /version reports the commit the answering revision was built from, so every response names the
+# revision that served it. Turning affinity on would make this step measure one revision
+# repeatedly and still pass, so it would have to be rewritten rather than merely reconsidered.
+#
+# It warms both revisions first, and that is not defensive. The candidate is warm by this point,
+# from its verification at zero traffic, but the stable revision usually is not: production
+# scales to zero and sees a couple of requests an hour, so the revision serving production is
+# cold most of the time. Measured against live prod before this step existed - five of thirty
+# requests timed out at ten seconds while the app started, then the remaining twenty-five
+# answered in milliseconds. Without the warm-up the first canary step would send ninety per cent
+# of its requests to a cold revision, count the timeouts as failures, and roll back a perfectly
+# good deployment.
+#
+# Warming is separate from measuring on purpose. "Is this revision up" and "how is traffic
+# split" are different questions, and keeping them apart is what lets the measurement use a
+# short timeout and treat any unanswered request as a real fault.
+
+parameters:
+  - name: displayName
+    type: string
+  # The weight the preceding apply asked for. 100 and 0 are asserted exactly; anything between
+  # is asserted as "the split took effect", for the reason given beside that check.
+  - name: expectedCandidatePercentage
+    type: string
+  # One hundred is chosen for the ten per cent step: at that weight the chance of no request
+  # reaching the candidate is 0.9^100, which is about one run in forty thousand. Fewer requests
+  # would make the cheapest assertion here the flaky one.
+  - name: requests
+    type: string
+    default: "100"
+  - name: condition
+    type: string
+    default: succeeded()
+  # Set by hand on a manual run to exercise the rollback, and compared against this step's own
+  # weight so one value picks one step. See the comment on the pipeline's failCanaryAt parameter
+  # for why a knob that can only cause a failure is a different thing from one that can hide one.
+  - name: failAt
+    type: string
+    default: "none"
+
+steps:
+  - script: |
+      set -euo pipefail
+
+      if [ -z "${APP_FQDN:-}" ]; then
+        echo "##vso[task.logissue type=error]APP_FQDN is empty - no apply step set it"
+        exit 1
+      fi
+
+      TAG="${BUILD_SOURCEVERSION:0:7}"
+      EXPECTED="${{ parameters.expectedCandidatePercentage }}"
+      N="${{ parameters.requests }}"
+
+      # The label hostnames, built from the app's own by splicing the label in before the
+      # domain - the same shape terraform builds candidate_fqdn from, and the reason that
+      # output exists. Blue is skipped when no stable revision was named, which cannot happen
+      # in a canary but keeps this honest if the template is ever called elsewhere.
+      WARM=(--retry 10 --retry-all-errors --retry-delay 5 --max-time 20)
+      for host in "${APP_FQDN/./---green.}" "${APP_FQDN/./---blue.}"; do
+        case "$host" in
+          *---blue.*) [ -n "${STABLE_SUFFIX:-}" ] || continue ;;
+        esac
+        echo "warming $host"
+        if curl -fsS -o /dev/null "${WARM[@]}" "https://$host/healthz"; then
+          continue
+        fi
+
+        # Which revision failed to answer decides what the pipeline should do about it, and this
+        # is the only place that knows. A candidate that will not start is what the rollback
+        # exists for. A *previous* revision that will not start means rolling back to it would
+        # route all of production at something already broken - the worst outcome available, and
+        # one the rollback would otherwise reach confidently. So record that and let the
+        # rollback's condition stand down; a failed deployment with production still on the
+        # candidate is worse than it sounds but better than this.
+        case "$host" in
+          *---blue.*)
+            echo "##vso[task.setvariable variable=ROLLBACK_UNSAFE]true"
+            echo "##vso[task.logissue type=error]the previous revision did not answer on $host - rolling back to it would take production down, so the rollback will be skipped"
+            ;;
+          *)
+            echo "##vso[task.logissue type=error]the new revision did not answer on $host"
+            ;;
+        esac
+        exit 1
+      done
+
+      declare -A tally
+      candidate=0
+      others=0
+      failures=0
+
+      # Sequential rather than parallel. The point is to sample the ingress decision, and
+      # concurrent requests from one source can be routed together; it also keeps the arithmetic
+      # below honest about how many requests were actually made.
+      for _ in $(seq 1 "$N"); do
+        sha="$(curl -fsS --max-time 10 "https://$APP_FQDN/version" | jq -r '.git_sha' 2>/dev/null || true)"
+        if [ -z "$sha" ] || [ "$sha" = "null" ]; then
+          failures=$((failures + 1))
+          continue
+        fi
+        tally["$sha"]=$(( ${tally["$sha"]:-0} + 1 ))
+        if [ "$sha" = "$TAG" ]; then
+          candidate=$((candidate + 1))
+        else
+          others=$((others + 1))
+        fi
+      done
+
+      echo "$N requests to $APP_FQDN:"
+      if [ "${#tally[@]}" -gt 0 ]; then
+        for sha in $(printf '%s\n' "${!tally[@]}" | sort); do
+          printf '  %-10s %4d\n' "$sha" "${tally[$sha]}"
+        done
+      fi
+      if [ "$failures" -gt 0 ]; then
+        printf '  %-10s %4d\n' "no answer" "$failures"
+      fi
+      printf 'candidate %s served %d of %d, asked for %s%%\n' "$TAG" "$candidate" "$N" "$EXPECTED"
+
+      # A request that does not answer is the failure this step exists to catch, and it is what
+      # makes the rollback fire on a genuinely bad revision rather than only on an injected one.
+      # But the threshold is two rather than zero, and the arithmetic is the reason. A revision
+      # that is broken rather than merely new fails one request per request routed to it: at the
+      # ten per cent step that is about ten of a hundred, at fifty about twenty-five of fifty,
+      # and at a hundred all of them. A transient - one reset connection, one unlucky moment at
+      # the ingress - is one. Two separates those without tolerating anything real.
+      #
+      # Zero was the first answer here and it was wrong, for the same reason this step has no
+      # tolerance band on the proportion: a gate that fails a good deployment occasionally
+      # teaches people to re-run it, and this one would have bounced production back to the
+      # previous revision to do it. Flagger's canary analysis carries the same control for the
+      # same reason, as a count of failed checks before rollback rather than a single one.
+      #
+      # What this does give up is a revision that fails a small fraction of its own requests:
+      # at ten per cent weight, a revision failing one request in ten contributes one failure
+      # here and passes. The verification at zero traffic and the warm-up above are what cover
+      # the gross cases; this one covers the ones that only appear under real traffic.
+      if [ "$failures" -gt 2 ]; then
+        echo "##vso[task.logissue type=error]$failures of $N requests did not return a commit"
+        exit 1
+      fi
+
+      if [ "$EXPECTED" -eq 100 ]; then
+        if [ "$others" -ne 0 ]; then
+          echo "##vso[task.logissue type=error]$others of $N requests were served by a revision other than $TAG"
+          exit 1
+        fi
+        echo "every request reached $TAG"
+      elif [ "$EXPECTED" -eq 0 ]; then
+        if [ "$candidate" -ne 0 ]; then
+          echo "##vso[task.logissue type=error]$candidate of $N requests reached $TAG, which should be holding no traffic"
+          exit 1
+        fi
+        echo "no request reached $TAG, which is holding no traffic"
+      else
+        # No tolerance band on the proportion, and this is a decision rather than laziness.
+        # Distribution is per request and therefore binomial: at a hundred requests and a ten
+        # per cent weight the standard deviation is three, so any band tight enough to catch a
+        # weight that applied as one per cent is loose enough to fail on a correct one from time
+        # to time. A gate that fails a good deployment occasionally teaches people to re-run it,
+        # which costs more than the check is worth.
+        #
+        # So the gate is the binary part - did the split take effect at all - and the counts are
+        # printed above for the part that needs a reader. A weight that applied as 1 instead of
+        # 10 passes here and is plainly visible in the log.
+        if [ "$candidate" -eq 0 ]; then
+          echo "##vso[task.logissue type=error]no request reached $TAG, so the $EXPECTED% weight did not take effect"
+          exit 1
+        fi
+        if [ "$others" -eq 0 ]; then
+          echo "##vso[task.logissue type=error]every request reached $TAG, so the stable revision served none at $EXPECTED%"
+          exit 1
+        fi
+        echo "traffic is split between $TAG and the stable revision"
+      fi
+
+      # Last, so that the log above records a correct measurement and then a failure that was
+      # asked for. A reader of the run that proves the rollback should be able to see that
+      # nothing was actually wrong with the revision.
+      if [ "${{ parameters.failAt }}" = "$EXPECTED" ]; then
+        echo "##vso[task.logissue type=error]failing at $EXPECTED% because failCanaryAt asked for it, to exercise the rollback"
+        exit 1
+      fi
+    displayName: "${{ parameters.displayName }}"
+    condition: ${{ parameters.condition }}
