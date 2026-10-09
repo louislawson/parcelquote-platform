@@ -11,6 +11,8 @@ rather than in this repository.
   HashiCorp signing key
 - `templates/terraform-apply.yml` — one plan and apply of one environment at one traffic
   split. Dev calls it once and prod twice, which is why it is a template
+- `templates/verify-traffic-split.yml` — measures how traffic is actually divided between two
+  revisions, by asking which one answered
 - `templates/deploy-assertions.yml` — the three checks that follow every apply: the smoke
   test, and the two standing assertions about the Key Vault grant and the alert receiver
 
@@ -33,20 +35,72 @@ approve. Prod promotes that tag rather than building its own, and its identity h
 
 Prod deploys one revision at a time but keeps the previous one running, which is what lets a
 bad release be undone by moving traffic instead of deploying again. The stage therefore
-applies twice. It first reads the live app to find which revision is serving, then applies
-with the new revision at **0%** of traffic — created, running, and reachable only on its own
-`---green` hostname. It verifies there that the new revision answers with this commit *and*
-that the production hostname is still answering with the previous one, which is what makes
-the first assertion mean anything. Only then does the second apply move the traffic.
+applies four times, each time asking Terraform for a different split, and checks between
+every one.
 
-Both plans are published under `terraform-plan-prod`, as `plan-staged.txt` and
-`plan-flip.txt`. A re-run of a build that already deployed is a no-op: the discovery step
-recognises that this commit is already serving, skips the staged apply, and leaves the
+It first reads the live app to find which revision is serving. Then it applies with the new
+revision at **0%** — created, running, and reachable only on its own `---green` hostname. It
+verifies there that the new revision answers with this commit *and* that the production
+hostname is still answering with the previous one, which is what makes the first assertion
+mean anything. Traffic then moves to **10%**, **50%** and **100%**, and after each shift the
+split is *measured* rather than read back: a hundred or fifty requests to the production
+hostname, counted by which commit answered. Session affinity is off, so the division is
+decided per request, and `/version` names the revision that served it.
+
+Neither intermediate weight buys a soak. This service sees a couple of requests an hour, so
+there is no organic traffic to watch, and the alerts that might gate one run on fifteen-minute
+windows. What they buy is proof that weighting works at all, and two earlier points at which a
+revision that is broken under real traffic is caught.
+
+Five plans are published under `terraform-plan-prod` — `plan-staged.txt`,
+`plan-canary-10.txt`, `plan-canary-50.txt`, `plan-flip.txt` and, if it runs,
+`plan-rollback.txt`. A re-run of a build that already deployed is a no-op: the discovery step
+recognises that this commit is already serving, skips the staged applies, and leaves the
 previous revision where a rollback would need it.
 
-If verification fails, the stage fails with the new revision holding no traffic and
-production untouched — safe because the traffic never moved, not because anything rolled
-back. Nothing yet reverts a flip that succeeded and then failed its smoke test.
+### If something fails
+
+Any of those checks failing triggers a rollback: one more apply returning all traffic to the
+previous revision, which is still running and still labelled `blue`. The build stays red —
+the rollback restores service, it does not make the deployment a success.
+
+There is one exception, and it is the case where rolling back would be the wrong thing to do.
+Each measurement warms both revisions before sampling, so it is the only step that knows
+*which* of the two will not answer. If the failure is the previous revision, the rollback
+stands down rather than routing all of production at something already broken, and says so.
+A failed deployment with production still on the new revision is a bad outcome; it is not the
+worst one available.
+
+A measurement tolerates up to two unanswered requests before failing. A revision that is
+genuinely broken fails one request per request routed to it — about ten of a hundred at the
+first canary step — while a single reset connection is one. Two separates those without
+tolerating anything real, and the counts are printed either way.
+
+Where the failure lands decides what was exposed. A revision that fails verification at 0%
+never reaches production at all. One that fails at 10% or 50% served that share of requests
+for the length of one apply, about thirty seconds, before being taken out of service. Neither
+case needs anyone to be awake.
+
+The rollback deliberately sits *before* the two standing assertions about the Key Vault grant
+and the alert receiver, which say nothing about this revision. A vault grant that has drifted
+is not fixed by moving traffic, and a rollback triggered by one would be a false remedy
+dressed up as a safe one.
+
+### Exercising the rollback
+
+A rollback path nobody has watched work is a paragraph, so the pipeline has a runtime
+parameter, **Deliberately fail prod's verification at this weight**, which can be set to `0`,
+`10`, `50` or `100` when queueing a run by hand. The chosen measurement reports its real
+result and then fails anyway, the rollback runs, and the run stays in the history as the
+record.
+
+It exists because a genuinely broken commit cannot be used instead: dev deploys first and its
+smoke test fails, so prod never runs and the rollback never fires.
+
+What makes it acceptable where a *skip* variable would not be is that it can only ever make
+the pipeline stricter. Setting it causes a failure; there is no value that suppresses one, and
+the parameter accepts nothing but those five words. Left alone it is `none`, and automatic
+runs never set it.
 
 Authentication to Azure is workload identity federation throughout. There is no stored
 Azure credential in this repository or in the pipeline.

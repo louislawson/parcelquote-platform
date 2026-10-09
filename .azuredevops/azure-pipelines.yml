@@ -1,3 +1,25 @@
+# A runtime parameter rather than a variable, because a variable declared in YAML cannot be set
+# when a run is queued and the whole point of this one is to be set by hand, once, to watch the
+# rollback work. It exists because a genuinely broken commit cannot be used for that: dev deploys
+# first and its smoke test fails, so prod never runs and the rollback never fires. The same wall
+# phase 4 met when it needed to prove the Key Vault assertion.
+#
+# What makes a knob like this acceptable, where the skip variable considered for the Snyk gate was
+# not, is that it can only ever make the pipeline stricter. Setting it causes a failure; it cannot
+# suppress one, and there is no value that turns a check off. The enumerated values are the only
+# ones accepted, so it cannot be set to anything else by accident either.
+#
+# "0" fails the verification before any traffic has moved, which proves the other half of the
+# claim: a revision that fails there never reaches production at all. The rollback still runs and
+# plans nothing, which is worth knowing rather than surprising - it is idempotent, and safe to run
+# after any failure.
+parameters:
+  - name: failCanaryAt
+    displayName: "Deliberately fail prod's verification at this weight (to exercise the rollback)"
+    type: string
+    default: "none"
+    values: ["none", "0", "10", "50", "100"]
+
 variables:
   REGISTRY_NAME: "crparcelquoteuks01"
   LOGIN_SERVER: "crparcelquoteuks01.azurecr.io"
@@ -325,6 +347,7 @@ stages:
                       printf '%s\n' "$ROWS" | sed 's/^/  /'
 
                       STABLE=""
+                      STABLE_WEIGHT=-1
                       CANDIDATE_WEIGHT=""
                       COUNT=0
                       TOTAL=0
@@ -341,8 +364,15 @@ stages:
                         suffix="${name#"$APP"--}"
                         if [ "$suffix" = "$CANDIDATE" ]; then
                           CANDIDATE_WEIGHT="$weight"
-                        else
+                        # The revision carrying the most traffic, not merely one that is not the candidate. After a
+                        # rollback the array holds two of those - the revision that failed, left at 0, and the one
+                        # traffic was returned to - and taking whichever appeared last made the answer depend on
+                        # array order. Reversing two rows was enough to name the failed revision as the one to hold
+                        # production traffic through the next deployment. Weight is the question being asked, so ask
+                        # it directly; this is also correct in every shape that existed before rollbacks did.
+                        elif [ "$weight" -gt "$STABLE_WEIGHT" ]; then
                           STABLE="$suffix"
+                          STABLE_WEIGHT="$weight"
                         fi
                       done <<<"$ROWS"
 
@@ -469,8 +499,56 @@ stages:
                     else
                       echo "production is serving $live, which is not $TAG; stable suffix ${STABLE_SUFFIX:-<none>} carries no commit to check against"
                     fi
+
+                    # Last, so the log records a correct verification and then a failure that was
+                    # asked for. The candidate holds no traffic at this point, so a run with this
+                    # set proves the other half of the claim: a revision failing here never
+                    # reaches production at all. The rollback still runs and plans nothing.
+                    if [ "${{ parameters.failCanaryAt }}" = "0" ]; then
+                      echo "##vso[task.logissue type=error]failing at 0% because failCanaryAt asked for it, to exercise the rollback"
+                      exit 1
+                    fi
                   displayName: "Verify the candidate while prod still serves the old revision"
                   condition: and(succeeded(), eq(variables['STAGED_ROLLOUT'], 'true'))
+                # Two intermediate weights before the candidate takes everything. Neither buys a soak
+                # - this service sees a couple of requests an hour, so there is no organic traffic to
+                # watch and the alerts that might gate one run on fifteen-minute windows. What they do
+                # buy is proof that weighting works at all, measured rather than read back, and two
+                # earlier points at which a revision that is broken under real traffic takes the
+                # rollback below instead of production.
+                - template: templates/terraform-apply.yml
+                  parameters:
+                    environment: prod
+                    serviceConnection: "azure-parcelquote-prod"
+                    displayName: "Shift 10% of traffic to the new revision"
+                    planFile: plan-canary-10.txt
+                    candidatePercentage: "10"
+                    condition: and(succeeded(), eq(variables['STAGED_ROLLOUT'], 'true'))
+                - template: templates/verify-traffic-split.yml
+                  parameters:
+                    displayName: "Measure the split at 10%"
+                    expectedCandidatePercentage: "10"
+                    failAt: ${{ parameters.failCanaryAt }}
+                    condition: and(succeeded(), eq(variables['STAGED_ROLLOUT'], 'true'))
+                - template: templates/terraform-apply.yml
+                  parameters:
+                    environment: prod
+                    serviceConnection: "azure-parcelquote-prod"
+                    displayName: "Shift 50% of traffic to the new revision"
+                    planFile: plan-canary-50.txt
+                    candidatePercentage: "50"
+                    condition: and(succeeded(), eq(variables['STAGED_ROLLOUT'], 'true'))
+                # Fifty requests rather than a hundred. The hundred at ten per cent buys the one
+                # assertion here that could be flaky; at an even split, two dozen would do and fifty
+                # is already generous. Every request is a real span in Application Insights, so the
+                # number is not free.
+                - template: templates/verify-traffic-split.yml
+                  parameters:
+                    displayName: "Measure the split at 50%"
+                    expectedCandidatePercentage: "50"
+                    requests: "50"
+                    failAt: ${{ parameters.failCanaryAt }}
+                    condition: and(succeeded(), eq(variables['STAGED_ROLLOUT'], 'true'))
                 # Weights live in configuration rather than template, which Azure classifies as an
                 # application-scope change, so this apply creates no revision and costs only its own
                 # init and plan. It runs unconditionally: where the staged apply was skipped this is
@@ -482,6 +560,53 @@ stages:
                     displayName: "Shift all traffic to the new revision"
                     planFile: plan-flip.txt
                     candidatePercentage: "100"
+                # Runs whether or not the rollout was staged, because it is the only step that proves
+                # traffic actually moved. It is stronger than the smoke test that follows it: that
+                # one polls until a single request reports the new commit, this one requires every
+                # request to, so a residual weight left on the outgoing revision fails here and
+                # passes there.
+                - template: templates/verify-traffic-split.yml
+                  parameters:
+                    displayName: "Measure the split after the shift"
+                    expectedCandidatePercentage: "100"
+                    requests: "50"
+                    failAt: ${{ parameters.failCanaryAt }}
+                # The rollback, and its position in the list is the design. It follows every check
+                # that can indict the revision - the verification at zero traffic, both canary
+                # measurements, and the one above - and precedes the two standing assertions about
+                # the Key Vault grant and the alert receiver, which say nothing about this revision.
+                # A vault grant that has drifted is not fixed by moving traffic, and a rollback
+                # triggered by one would be a false remedy dressed up as a safe one.
+                #
+                # Gated on the rollout having been staged because that is what guarantees there is a
+                # revision to go back to. Where it was not staged the single apply either changed
+                # nothing or there is no stable revision at all, and candidate_percentage of 0 with
+                # no stable suffix is a configuration the module refuses by design.
+                #
+                # The job stays failed afterwards. This returns production to service; it does not
+                # make the deployment a success, and a green build here would be a lie.
+                #
+                # Not the runOnce strategy's own on.failure hook, which is where a reader familiar
+                # with Azure Pipelines would look for this, and not its routeTraffic and
+                # postRouteTraffic phases either. The hook runs on failure of *any* step in the
+                # job, which would put the two standing assertions back inside the trigger and
+                # undo the ordering above - a drifted Key Vault grant would move production
+                # traffic. The lifecycle phases would express the shape more idiomatically and
+                # would scope the hook correctly, but only by splitting this job into three, which
+                # is a larger change than the thing it would tidy. Worth revisiting if a fourth
+                # phase ever appears here.
+                #
+                # It also stands down when the step that failed reported that the previous
+                # revision is the broken one, because returning all of production to a revision
+                # that will not answer is worse than leaving it where it is.
+                - template: templates/terraform-apply.yml
+                  parameters:
+                    environment: prod
+                    serviceConnection: "azure-parcelquote-prod"
+                    displayName: "Roll back: return all traffic to the previous revision"
+                    planFile: plan-rollback.txt
+                    candidatePercentage: "0"
+                    condition: and(failed(), eq(variables['STAGED_ROLLOUT'], 'true'), ne(variables['ROLLBACK_UNSAFE'], 'true'))
                 - task: PublishPipelineArtifact@1
                   displayName: "Publish the prod plan for review"
                   condition: succeededOrFailed()
