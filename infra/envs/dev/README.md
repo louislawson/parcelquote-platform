@@ -115,6 +115,7 @@ and for recovering when a pipeline run has failed partway through an apply.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
+| candidate\_percentage | Share of production traffic sent to the revision this deployment creates. The pipeline passes 0, verifies the revision on its own hostname, then passes 100. | `number` | `100` | no |
 | environment | Environment name, used in every resource name and the environment tag. The backend block names its state container separately, so changing this alone does not repoint state. | `string` | `"dev"` | no |
 | image\_repository | Repository holding the image, without the registry host or a tag. | `string` | n/a | yes |
 | image\_tag | Tag to run, normally the short commit SHA the pipeline built. The only input that changes between deployments, and changing it creates a new revision. | `string` | n/a | yes |
@@ -122,14 +123,16 @@ and for recovering when a pipeline run has failed partway through an apply.
 | owner | Email address of the person accountable for these resources, applied as the owner tag. This is who to contact before deleting anything. | `string` | n/a | yes |
 | project\_app\_service | Workload name used in every resource name and the workload tag. Must match the value bootstrap was applied with. | `string` | n/a | yes |
 | registry\_login\_server | Fully qualified registry host, such as crparcelquoteuks01.azurecr.io. Prefixes the image reference; the app authenticates to it with its managed identity. | `string` | n/a | yes |
+| stable\_revision\_suffix | Suffix of the revision already serving production, discovered from the live app by the pipeline rather than held in the repository. Naming one is what turns a deployment into a blue/green deployment; left empty, the newest revision takes everything once Azure reports it ready. | `string` | `""` | no |
 
 ## Outputs
 
 | Name | Description |
 |------|-------------|
 | app\_fqdn | Stable hostname, serving whichever revisions the traffic weights point at. |
-| latest\_revision\_fqdn | Hostname of the newest revision, reachable regardless of traffic weighting. The smoke test uses this so it asserts against the revision the run produced. |
-| latest\_revision\_name | Name of the newest revision, for correlating container logs and shifting traffic. |
+| candidate\_fqdn | Hostname of the green-labelled revision, reachable whatever share of traffic that revision carries, which is what allows a new revision to be verified before any traffic reaches it. Null in Single mode, where there is no label. |
+| latest\_revision\_fqdn | Hostname of the newest revision as the provider last read it, for reading by hand. Stale by one revision immediately after an apply, so nothing automated should assert against it. |
+| latest\_revision\_name | Name of the newest revision as the provider last read it, for correlating container logs by hand. Stale by one revision immediately after an apply, for the same reason as above. |
 <!-- END_TF_DOCS -->
 
 ## Gotchas

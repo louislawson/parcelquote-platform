@@ -19,13 +19,15 @@ locals {
 module "workload" {
   source = "../../modules/workload"
 
-  environment           = var.environment
-  image_repository      = var.image_repository
-  image_tag             = var.image_tag
-  location_short        = var.location_short
-  owner                 = var.owner
-  project_app_service   = var.project_app_service
-  registry_login_server = var.registry_login_server
-  revision_mode         = "Multiple"
-  tags                  = merge(local.common_tags, { environment = var.environment })
+  candidate_percentage   = var.candidate_percentage
+  environment            = var.environment
+  image_repository       = var.image_repository
+  image_tag              = var.image_tag
+  location_short         = var.location_short
+  owner                  = var.owner
+  project_app_service    = var.project_app_service
+  registry_login_server  = var.registry_login_server
+  revision_mode          = "Multiple"
+  stable_revision_suffix = var.stable_revision_suffix
+  tags                   = merge(local.common_tags, { environment = var.environment })
 }
