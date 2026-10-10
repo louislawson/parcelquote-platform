@@ -218,6 +218,83 @@ stages:
               testResultsFormat: JUnit
               testResultsFiles: "checkov-junit.xml"
               testRunTitle: "Checkov"
+
+          # Installed here rather than in templates/install-terraform-tools.yml because only this
+          # job needs it, and the deploy jobs would pay the download for nothing. Pinned to the
+          # same version the READMEs tell a contributor to run locally: two versions of
+          # terraform-docs disagree about what an up-to-date table looks like, so a check running
+          # a different one would fail on a table a contributor had just regenerated correctly.
+          - script: |
+              set -euo pipefail
+              cd /tmp
+              VERSION="v0.20.0"
+              SHA256="34ae01772412bb11474e6718ea62113e38ff5964ee570a98c69fafe3a6dff286"
+              curl -fsSLO "https://github.com/terraform-docs/terraform-docs/releases/download/${VERSION}/terraform-docs-${VERSION}-linux-amd64.tar.gz"
+              echo "${SHA256}  terraform-docs-${VERSION}-linux-amd64.tar.gz" | sha256sum -c -
+              tar -xzf "terraform-docs-${VERSION}-linux-amd64.tar.gz" terraform-docs
+              sudo mv terraform-docs /usr/local/bin/
+              terraform-docs --version
+            displayName: "Verify and install terraform-docs v0.20.0"
+
+          # The generated Inputs and Outputs tables are the only documentation here that can go
+          # stale without anyone editing it: a changed variable description leaves the table
+          # describing the old one. That happened for three PRs, and nothing reported it.
+          #
+          # Discovered by the marker rather than listed, for the reason the validate step above
+          # was changed: a list has to be edited when a configuration appears, and nothing makes
+          # anyone do it. Any README holding the terraform-docs markers is in scope, which covers
+          # the shared module as well as the roots.
+          #
+          # The failure is collected rather than thrown. terraform-docs exits non-zero per
+          # directory, so `set -e` alone would stop at the first stale table and hide the rest —
+          # and running it under a loop without capturing that status at all passes while
+          # printing "is out of date", which is how the first draft of this step behaved.
+          - script: |
+              set -euo pipefail
+              mapfile -t dirs < <(grep -rl 'BEGIN_TF_DOCS' --include=README.md infra | xargs -n1 dirname | sort)
+              if [ "${#dirs[@]}" -eq 0 ]; then
+                echo "##vso[task.logissue type=error]no generated documentation found under infra"
+                exit 1
+              fi
+              echo "checking ${#dirs[@]} generated tables:"
+              stale=0
+              for dir in "${dirs[@]}"; do
+                terraform-docs markdown table --output-file README.md --output-check "$dir" || stale=1
+              done
+              if [ "$stale" -ne 0 ]; then
+                echo "##vso[task.logissue type=error]a generated table is out of date - regenerate it with terraform-docs and commit the result"
+                exit 1
+              fi
+            displayName: "Check the generated documentation is current"
+
+          # Relative links only, and deliberately not external URLs: a gate that depends on
+          # somebody else's uptime fails for reasons unrelated to the change, which is the one
+          # thing this pipeline tries hardest not to do. Every link that has actually broken here
+          # was relative — one survived six pull requests, because nothing in the pipeline read
+          # documentation at all.
+          #
+          # git ls-files rather than find, so the application's vendored virtualenv and anything
+          # else untracked stays out of scope.
+          - script: |
+              set -euo pipefail
+              fail=0
+              count=0
+              while IFS= read -r file; do
+                count=$((count + 1))
+                dir="$(dirname "$file")"
+                while IFS= read -r target; do
+                  case "$target" in http*|mailto:*) continue ;; esac
+                  target="${target%%#*}"
+                  [ -n "$target" ] || continue
+                  if [ ! -e "$dir/$target" ]; then
+                    echo "##vso[task.logissue type=error]$file links to $target, which does not exist"
+                    fail=1
+                  fi
+                done < <(grep -oE '\]\([^)]*\)' "$file" | sed 's/^](//; s/)$//')
+              done < <(git ls-files '*.md')
+              [ "$fail" -eq 0 ] || exit 1
+              echo "every relative link in $count markdown files resolves"
+            displayName: "Check documentation links resolve"
   - stage: Publish
     displayName: "Publish image"
     condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))

@@ -21,8 +21,10 @@ rather than in this repository.
 
 **Validate** runs on every pull request and every commit to main. It builds the
 Dockerfile's test target, which runs ruff and pytest, builds the runtime target, and
-checks formatting, validates and lints every Terraform configuration. Nothing in this
-stage touches Azure, so it runs with no credentials.
+checks formatting, validates and lints every Terraform configuration. It also checks the
+documentation: that every generated Inputs and Outputs table matches the configuration it
+describes, and that every relative link in the Markdown resolves. Nothing in this stage touches
+Azure, so it runs with no credentials.
 
 **Publish**, **Deploy to dev** and **Deploy to prod** run only on main. Publish builds the
 runtime image with the short commit SHA as both its tag and its `GIT_SHA` build argument,
@@ -192,11 +194,11 @@ forever afterwards.
 
 ### Pinned tool versions
 
-Five versions are pinned, and nothing automatically updates any of them. Automated updates
+Six versions are pinned, and nothing automatically updates any of them. Automated updates
 were investigated and declined: Dependabot has no Azure Pipelines ecosystem and no generic
-manager, so it cannot see four of the five, and on a `FROM` line carrying a digest without a
+manager, so it cannot see five of the six, and on a `FROM` line carrying a digest without a
 tag it resolves the digest of `latest` — which would propose a Python interpreter migration as
-a security update. Renovate can reach all five through custom regex managers, and was declined
+a security update. Renovate can reach all of them through custom regex managers, and was declined
 on the maintenance cost of five hand-written regexes that fail silently when they stop
 matching.
 
@@ -206,11 +208,12 @@ matching.
 | tflint | `v0.64.0` | `templates/install-terraform-tools.yml` | Version and SHA256 together; the command is in a comment beside the parameter |
 | Checkov | `3.3.19` | `azure-pipelines.yml`, the `pipx install` step | Bump both the pin and the step's `displayName`, and the local install, or local and CI disagree |
 | Snyk CLI | `v1.1307.4` | `azure-pipelines.yml`, `distributionChannel` on both Snyk tasks | `curl -s https://downloads.snyk.io/cli/stable/version`, then prefix `v` — the unprefixed path 403s |
+| terraform-docs | `v0.20.0` | `azure-pipelines.yml`, the install step in the Terraform job | Version and SHA256 together, from the release's `.sha256sum`. Keep it equal to the version used locally, or the two disagree about what an up-to-date table looks like |
 | Base image | digest | `app/Dockerfile` | See the comment above the `FROM` line |
 
 Only the base image has anything watching it: Snyk's container gate catches it when a pinned
 digest goes stale, which is how the perl-base advisories surfaced within about 36 hours. The
-other four fail quietly by under-checking rather than by failing, so they need a periodic look
+other five fail quietly by under-checking rather than by failing, so they need a periodic look
 rather than a gate.
 
 ### The `dev` environment
