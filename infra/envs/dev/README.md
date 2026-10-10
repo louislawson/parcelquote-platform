@@ -125,7 +125,6 @@ and for recovering when a pipeline run has failed partway through an apply.
 |------|-------------|------|---------|:--------:|
 | candidate\_percentage | Share of traffic sent to the revision this deployment creates. Production's pipeline passes 0, verifies the revision on its own hostname, then 10, 50 and 100, measuring the split after each shift. Dev leaves it at the default, where the newest revision takes everything. | `number` | `100` | no |
 | environment | Environment name, used in every resource name and the environment tag. The backend block names its state container separately, so changing this alone does not repoint state. | `string` | `"dev"` | no |
-| image\_repository | Repository holding the image, without the registry host or a tag. | `string` | n/a | yes |
 | image\_tag | Tag to run, normally the short commit SHA the pipeline built. The only input that changes between deployments, and changing it creates a new revision. | `string` | n/a | yes |
 | location\_short | Azure region abbreviation used in resource names, such as uks. Must match the value bootstrap was applied with, since those names are used to look its resources up. | `string` | n/a | yes |
 | owner | Email address of the person accountable for these resources, applied as the owner tag. This is who to contact before deleting anything. | `string` | n/a | yes |
