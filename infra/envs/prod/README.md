@@ -175,9 +175,12 @@ a new commit cannot be applied at all. Recreating Application Insights is the re
 meet this, and the error will name a duplicate suffix rather than the cause.
 
 Three further details, measured on a throwaway app rather than inferred, because the obvious
-recovery from a bad release is to redeploy the previous one and it does not work. Deactivating a
-revision does not release its suffix. The rejected template is *retained* as desired state and
-retried on every later write, so after a collision even a traffic-only change is refused — with
+recovery from a bad release is to redeploy the previous one and it does not work. The rule is
+narrower than it reads: a reused suffix is rejected when the template differs from the one
+currently running, which is when the platform has to create a revision. An identical template
+creates nothing and is accepted. Deactivating a revision does not release its suffix. The
+rejected template is *retained* as desired state and retried on every later write, so after a
+collision even a traffic-only change is refused — with
 an error naming a suffix that the resource itself does not report, since a `GET` returns the last
 one that succeeded. And the failure is asynchronous, so the client call succeeds and only the
 operation record carries the reason:
@@ -189,3 +192,13 @@ revision with suffix v1a2b3c4 already exists.'
 
 Recovery is template first, traffic second, and [docs/runbook.md](../../../docs/runbook.md)
 has it as a procedure.
+
+**This environment can never plan zero changes.** In `Multiple` mode the API does not return
+`template.revisionSuffix`, so the provider reads it as empty and every plan proposes setting it.
+Dev, in `Single` mode, gets the value back and plans clean — the mode is the only difference, and
+both were read from the live API to confirm it. Applying the change is a no-op, because the
+template it sends matches the revision already running, so Azure creates nothing. The consequence
+is for the reader rather than the operator: `1 to change` in a prod plan is the floor, not a
+signal, and the question to ask of a published plan is *what* changed rather than how much. It is
+the third attribute this resource reads back wrongly, alongside the two `latest_revision_*`
+outputs.

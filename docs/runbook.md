@@ -153,8 +153,12 @@ The apply fails, the rollback applies the same template and fails as well, and t
 template has been applied. Production keeps serving what it was serving throughout. Deactivating
 the old revision does not release its suffix, so pruning revisions is not a way around this.
 
-**Redeploying the old image tag** fails for the same reason, whether or not anything else about
-the template changed. A rollback here is a traffic shift or it is nothing.
+**Redeploying the old image tag** fails for the same reason. The rule is narrower than it first
+looks and worth stating exactly: a reused suffix is rejected when the template differs from the
+one currently running, because that is when the platform has to create a revision. A template
+identical to what is already running creates nothing and is accepted, which is why prod's
+permanent `template.revision_suffix` diff applies cleanly on every deploy. Redeploying an old tag
+is the first case, not the second. A rollback here is a traffic shift or it is nothing.
 
 **`terraform apply` from a laptop.** It works, and it defeats the approval that is the reason
 production has its own directory. Local runs are for reading plans.

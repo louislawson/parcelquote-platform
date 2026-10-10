@@ -77,7 +77,8 @@ environment somewhere else must not silently widen a privilege here.
 
 **The Inputs and Outputs tables in the infrastructure READMEs are generated.** They sit
 between `<!-- BEGIN_TF_DOCS -->` and `<!-- END_TF_DOCS -->` and come from terraform-docs.
-Change `variables.tf` or `outputs.tf` and regenerate; do not hand-edit the table.
+Change `variables.tf` or `outputs.tf` and regenerate; do not hand-edit the table. The validate
+stage checks this, so a stale table now fails the build rather than going unnoticed.
 
 **Add to a Gotchas list, never replace an entry.** Two separate edits have quietly deleted an
 existing gotcha by writing a new one over it. Only the diff catches this, so read it.
@@ -109,6 +110,18 @@ Checkov, pinned to the version the pipeline installs:
 ```bash
 checkov -d infra --framework terraform --compact
 ```
+
+The generated tables, for every README holding the terraform-docs markers — the three roots and
+the shared module. Pin the same version the pipeline installs, `v0.20.0`, or the two disagree
+about what an up-to-date table looks like:
+
+```bash
+terraform-docs markdown table --output-file README.md --output-check infra/envs/dev
+```
+
+The pipeline also checks that every relative link in the tracked Markdown resolves. There is no
+one-line local equivalent; it is a loop in the validate stage, and the failure message names the
+file and the target.
 
 A suppression is `#checkov:skip=CKV_...:<reason>` where the reason states the decision that
 was made and why. Name a phase only when the work genuinely is deferred to it; a skip that
