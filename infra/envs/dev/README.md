@@ -7,10 +7,9 @@ The pipeline applies this on every commit to main. Running it locally is for ite
 and uses your own identity rather than the pipeline's.
 
 The resources themselves live in the shared
-[workload module](../../modules/workload/README.md), which the production environment will
-call too once it exists. This directory holds the state, the backend that names it, the tags,
-and the values that make this environment dev. The list below is what the module creates on
-its behalf.
+[workload module](../../modules/workload/README.md), which the production environment calls
+too. This directory holds the state, the backend that names it, the tags, and the values that
+make this environment dev. The list below is what the module creates on its behalf.
 
 ## What it creates
 
@@ -59,13 +58,22 @@ from the platform that happens to be running it.
 ## Revisions
 
 `revision_mode` is `Single`: one revision serves all traffic and the previous one is
-deactivated on each apply. The `traffic_weight` block is required by the schema
-regardless, and is ignored until the mode changes. Phase 6 switches to `Multiple` for
-blue/green and canary, which is an in-place update rather than a replacement.
+deactivated on each apply. Production runs `Multiple`, which is what makes traffic weights
+meaningful and keeps the outgoing revision running for a rollback to shift traffic back to —
+see [infra/envs/prod/README.md](../prod/README.md). Dev stays `Single` on purpose: there is
+nothing here that a canary would protect, and the mode is the only input that makes the two
+environments behave differently. The `traffic_weight` block is still required by the schema,
+and in this shape the module puts the whole weight on the latest revision, which is where
+Azure's own readiness gate applies.
 
-`revision_suffix` is deliberately unset. Deriving it from the image tag would read
-better in the portal, but a suffix must be unique for the life of the app and a build
-can be re-run against an unchanged commit.
+`revision_suffix` is `v` followed by the image tag, so every revision is named after the
+commit that produced it. The `v` is not decoration: Azure requires a suffix to begin with an
+alphabetic character and roughly three short SHAs in eight begin with a digit. The cost is
+that a suffix is spent for the life of the app — deactivating the revision does not release
+it, which was measured rather than assumed — so a change to the container template that
+arrives without a new commit cannot be applied at all. Production turns that into a rule,
+since it means a rollback can only ever be a traffic shift; here it mostly means that
+re-running an unchanged commit creates no revision, which is the behaviour you want.
 
 ## Workload profile
 
@@ -115,7 +123,7 @@ and for recovering when a pipeline run has failed partway through an apply.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| candidate\_percentage | Share of production traffic sent to the revision this deployment creates. The pipeline passes 0, verifies the revision on its own hostname, then passes 100. | `number` | `100` | no |
+| candidate\_percentage | Share of traffic sent to the revision this deployment creates. Production's pipeline passes 0, verifies the revision on its own hostname, then 10, 50 and 100, measuring the split after each shift. Dev leaves it at the default, where the newest revision takes everything. | `number` | `100` | no |
 | environment | Environment name, used in every resource name and the environment tag. The backend block names its state container separately, so changing this alone does not repoint state. | `string` | `"dev"` | no |
 | image\_repository | Repository holding the image, without the registry host or a tag. | `string` | n/a | yes |
 | image\_tag | Tag to run, normally the short commit SHA the pipeline built. The only input that changes between deployments, and changing it creates a new revision. | `string` | n/a | yes |

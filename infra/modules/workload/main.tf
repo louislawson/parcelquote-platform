@@ -157,8 +157,12 @@ resource "azurerm_container_app" "ca" {
   # A Key Vault reference, not a value. Container Apps resolves it with the managed
   # identity, so the secret never passes through Terraform and lands in neither state
   # nor a plan file; replacing this with `value = ...` would put it in both. The id is
-  # versionless and vault_uri already ends in a slash, so rotation needs no change
-  # here — but it only takes effect on the next revision.
+  # versionless and vault_uri already ends in a slash, so a rotation needs no change here
+  # and no deployment either: the platform fetches the newest version and restarts the
+  # revisions referencing it, measured at 23 to 25 minutes against a documented half hour.
+  # Pinning a version in this id would turn that off, which is the one thing here not to
+  # tidy. What hid this for two phases: measured inside the refresh window, a restart
+  # re-injects the old value, which makes "rotation needs a deployment" look proven.
   secret {
     name                = "quote-api-key"
     identity            = data.azurerm_user_assigned_identity.container_app.id

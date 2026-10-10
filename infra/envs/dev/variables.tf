@@ -51,6 +51,6 @@ variable "stable_revision_suffix" {
 
 variable "candidate_percentage" {
   type        = number
-  description = "Share of production traffic sent to the revision this deployment creates. The pipeline passes 0, verifies the revision on its own hostname, then passes 100."
+  description = "Share of traffic sent to the revision this deployment creates. Production's pipeline passes 0, verifies the revision on its own hostname, then 10, 50 and 100, measuring the split after each shift. Dev leaves it at the default, where the newest revision takes everything."
   default     = 100
 }

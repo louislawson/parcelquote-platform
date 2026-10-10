@@ -8,6 +8,10 @@ The pipeline applies this on every commit to main, **after dev has deployed and 
 has passed, and after a manual approval**. Running it locally is for reading plans; applying by
 hand bypasses the approval that is the point of this directory.
 
+This file describes the environment. When a deployment has already gone wrong,
+[docs/runbook.md](../../../docs/runbook.md) is the procedure — what production is serving, how to
+roll back when the pipeline did not, and what not to reach for.
+
 ## What it creates
 
 Nothing of its own. Everything below is created by the module and listed here because this is
@@ -30,7 +34,7 @@ Four things belong to the bootstrap module and are looked up by interpolated nam
 `rg-parcelquote-prod-uks-01`, `id-parcelquote-prod-uks-01`, `kv-parcelquote-prod-uks` and the
 registry. Bootstrap creates them, grants the identity `AcrPull`, `Monitoring Metrics Publisher`
 and `Key Vault Secrets User`, and is applied by hand — see
-[infra/bootstrap/README.md](../bootstrap/README.md).
+[infra/bootstrap/README.md](../../bootstrap/README.md).
 
 ## How this differs from dev
 
@@ -58,6 +62,12 @@ bad deployment to be undone by moving traffic instead of deploying again — and
 revisions accumulate. Its revision also carries a `green` label, giving it a second hostname that
 reaches that revision whatever share of traffic it holds; `terraform output candidate_fqdn`
 prints it.
+
+The weights are the pipeline's business rather than this directory's. It applies this
+configuration four times per release — the candidate at 0, 10, 50 and then 100 per cent — and
+measures the split after each shift, which is why `candidate_percentage` is an input at all.
+See [.azuredevops/README.md](../../../.azuredevops/README.md) for the sequence and
+[docs/runbook.md](../../../docs/runbook.md) for what each failure point leaves behind.
 
 Everything else — alert thresholds, the availability test's location and timeout, scale to zero,
 probe configuration — is identical, because it comes from the module.
@@ -103,7 +113,7 @@ pipeline has not published will plan cleanly and then fail to start a revision.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| candidate\_percentage | Share of production traffic sent to the revision this deployment creates. The pipeline passes 0, verifies the revision on its own hostname, then passes 100. | `number` | `100` | no |
+| candidate\_percentage | Share of traffic sent to the revision this deployment creates. Production's pipeline passes 0, verifies the revision on its own hostname, then 10, 50 and 100, measuring the split after each shift. Dev leaves it at the default, where the newest revision takes everything. | `number` | `100` | no |
 | environment | Environment name, used in every resource name and the environment tag. The backend block names its state container separately, so changing this alone does not repoint state. | `string` | `"prod"` | no |
 | image\_repository | Repository holding the image, without the registry host or a tag. | `string` | n/a | yes |
 | image\_tag | Tag to run, normally the short commit SHA the pipeline built. The only input that changes between deployments, and changing it creates a new revision. | `string` | n/a | yes |
@@ -155,10 +165,27 @@ deactivated unless something deactivates it, and nothing does — so prod gains 
 revision per merge. They cost nothing, because billing follows replicas and an idle revision has
 none, and `max_inactive_revisions` never applies to a revision that does not go inactive. The
 real limit is Azure's own ceiling of 100 revisions with the oldest purged, and nothing reports
-the count, so it is worth a look rather than a trust.
+the count, so it is worth a look rather than a trust. Six were active on 10 October 2026; the
+runbook has the command.
 
 **A revision suffix is spent for the life of the app.** It is the short commit SHA, which makes
 rolling back a traffic shift rather than a redeployment of the old tag — that suffix cannot be
 used twice. The less obvious consequence: a change to the container template that arrives without
 a new commit cannot be applied at all. Recreating Application Insights is the realistic way to
 meet this, and the error will name a duplicate suffix rather than the cause.
+
+Three further details, measured on a throwaway app rather than inferred, because the obvious
+recovery from a bad release is to redeploy the previous one and it does not work. Deactivating a
+revision does not release its suffix. The rejected template is *retained* as desired state and
+retried on every later write, so after a collision even a traffic-only change is refused — with
+an error naming a suffix that the resource itself does not report, since a `GET` returns the last
+one that succeeded. And the failure is asynchronous, so the client call succeeds and only the
+operation record carries the reason:
+
+```text
+Field 'template.revisionsuffix' is invalid with details: 'Invalid value: "v1a2b3c4":
+revision with suffix v1a2b3c4 already exists.'
+```
+
+Recovery is template first, traffic second, and [docs/runbook.md](../../../docs/runbook.md)
+has it as a procedure.

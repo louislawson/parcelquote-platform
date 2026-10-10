@@ -10,7 +10,8 @@ rather than in this repository.
   tflint, each checksummed, with Terraform's checksums verified against a pinned
   HashiCorp signing key
 - `templates/terraform-apply.yml` — one plan and apply of one environment at one traffic
-  split. Dev calls it once and prod twice, which is why it is a template
+  split. Dev calls it once and prod five times — the candidate created at 0%, three shifts and
+  the rollback — which is why it is a template
 - `templates/verify-traffic-split.yml` — measures how traffic is actually divided between two
   revisions, by asking which one answered
 - `templates/deploy-assertions.yml` — the three checks that follow every apply: the smoke
@@ -86,6 +87,10 @@ and the alert receiver, which say nothing about this revision. A vault grant tha
 is not fixed by moving traffic, and a rollback triggered by one would be a false remedy
 dressed up as a safe one.
 
+[docs/runbook.md](../docs/runbook.md) turns all of this into a procedure: what production is
+serving at each failure point, how to roll back by hand when the rollback stood down, and what
+not to reach for — the obvious recovery, re-queueing the previous good build, cannot work.
+
 ### Exercising the rollback
 
 A rollback path nobody has watched work is a paragraph, so the pipeline has a runtime
@@ -107,15 +112,18 @@ Azure credential in this repository or in the pipeline.
 
 ## Configuration that is not in this repository
 
-Six things the pipeline depends on that no file here declares. Recreating this pipeline
+Eight things the pipeline depends on that no file here declares. Recreating this pipeline
 in a fresh Azure DevOps project means recreating them by hand.
 
-### The Azure service connection
+### The Azure service connections
 
-Named `azure-parcelquote-dev`, referenced by name from every `AzureCLI@2` task. It is an
-Azure Resource Manager connection using workload identity federation — no secret, no
-expiry to manage. Its service principal holds Contributor on the dev resource group and
-`AcrPush` on the registry, both granted by the bootstrap module.
+Two of them, one per environment, each referenced by name from the `AzureCLI@2` tasks in its
+own stage: `azure-parcelquote-dev` and `azure-parcelquote-prod`. Both are Azure Resource
+Manager connections using workload identity federation — no secret, no expiry to manage. Every
+privilege either principal holds comes from the bootstrap module and nowhere else: dev has
+Contributor on the dev resource group and `AcrPush` on the registry, prod has Contributor on
+the prod resource group and **no** push grant at all, because production promotes a tag dev
+already built.
 
 The deploy step reads `AZURESUBSCRIPTION_CLIENT_ID`, `AZURESUBSCRIPTION_TENANT_ID` and
 `AZURESUBSCRIPTION_SERVICE_CONNECTION_ID` from it and hands them to the azurerm provider
@@ -145,6 +153,22 @@ be revoked immediately, from **My account → Access tokens** in SonarQube Cloud
 **The expiry dates above are load-bearing.** Nothing warns the pipeline that a token is
 about to lapse, and when one does the affected step fails with an authentication error
 rather than anything that points here. Renew both and update this table.
+
+### Two GitHub Apps, reporting from outside Azure DevOps
+
+Both quality-gate vendors also have a GitHub App installed on the repository, and neither is
+visible from the pipeline that way.
+
+SonarQube Cloud's posts the **SonarCloud Code Analysis** check, carrying the quality gate from
+the analysis the pipeline just performed. That is what puts the result on a pull request at
+all, so it is a prerequisite for the gate rather than a second opinion.
+
+Snyk's posts the `security/snyk` commit status and scans on its own account: it reported a pass
+on a pull request that fired **no build whatsoever**, because the path filters excluded it. So
+it is an integration holding repository access and publishing its own verdict, which is exactly
+what this list exists to record. It is managed from Snyk's integrations page and, on the GitHub
+side, under the repository's installed apps — not from the `snyk-parcelquote` service
+connection, which carries nothing but the pipeline's token.
 
 ### When a SaaS gate is down
 
@@ -195,12 +219,27 @@ Referenced as `environment: dev` by the deployment job. Azure DevOps creates an
 environment on first reference, but it creates it empty — the check below has to be added
 deliberately.
 
+### The `prod` environment and its approval
+
+Referenced as `environment: prod` by the production deployment job, and carrying two checks
+that have to be added deliberately: an **Approval**, which is the whole reason production is a
+separate stage, and an **Exclusive Lock**.
+
+The approval's timeout is left at the 30-day default on purpose. Azure DevOps records a timed
+out approval as *skipped* rather than failed, so a short timeout turns an unattended weekend
+into a green build that deployed nothing.
+
 ### The exclusive lock check
 
 An **Exclusive Lock** check on the `dev` environment, paired with `lockBehavior: runLatest`
 on the deploy stage. The two only work together: the YAML setting says what to do when
 runs queue behind the lock, and does nothing at all unless the check exists to create a
 lock in the first place.
+
+The `prod` environment carries the same check, where it also keeps two production runs from
+interleaving traffic weights — each one reads the live weights once, before its first apply, and
+then applies four times against that reading, so a second run starting in between would
+invalidate it and leave each measuring the other's shift.
 
 The effect is that concurrent deploys serialise, and when several runs queue only the
 latest proceeds — the superseded ones are cancelled at the lock rather than skipped
@@ -331,9 +370,21 @@ It can be seen through the REST API, on the build definition under `triggers`.
 4. Add the `OWNER` pipeline variable
 5. Run it once; authorize the service connection at the prompt
 6. Add the Exclusive Lock check to the `dev` environment that the first run created
-7. Confirm fork builds are disabled in **Project settings → Pipelines → Settings**
-8. Install the **SonarQube Cloud** and **Snyk Security Scan** extensions in the
-   organization, then create the `sonarcloud-parcelquote` and `snyk-parcelquote` service
-   connections and record their expiry dates above
-9. In SonarQube Cloud, switch **Administration → Analysis Method → Automatic Analysis**
-   off, or CI analysis is ignored and coverage never appears
+7. Create `azure-parcelquote-prod` by the same manual procedure, then add its Enterprise
+   Application object id to `pipeline_principal_ids` and `"prod"` to
+   `local.deployment_environments` in `infra/bootstrap`, and apply it again
+8. Write `quote-api-key` into the prod vault through the temporary grant described in
+   bootstrap's README. The container app resolves the reference when it creates a revision, so
+   without the value the first production apply has nothing to resolve
+9. Create the `prod` environment with an **Approval** check and an **Exclusive Lock** check.
+   Worth creating before the first production run rather than after, unlike dev's, since the
+   approval is the point of the stage
+10. Confirm fork builds are disabled in **Project settings → Pipelines → Settings**
+11. Install the **SonarQube Cloud** and **Snyk Security Scan** extensions in the
+    organization, then create the `sonarcloud-parcelquote` and `snyk-parcelquote` service
+    connections and record their expiry dates above
+12. In SonarQube Cloud, switch **Administration → Analysis Method → Automatic Analysis**
+    off, or CI analysis is ignored and coverage never appears
+13. Install the vendors' GitHub Apps. SonarQube Cloud's is required for the quality gate to
+    appear on a pull request at all; Snyk's is optional and scans independently of this
+    pipeline
