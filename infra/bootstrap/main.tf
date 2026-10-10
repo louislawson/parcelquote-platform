@@ -90,7 +90,7 @@ resource "azurerm_storage_account" "st_tfstate" {
   account_replication_type        = "LRS"
   min_tls_version                 = "TLS1_2"
   https_traffic_only_enabled      = true
-  public_network_access_enabled   = true
+  public_network_access           = "Enabled"
   shared_access_key_enabled       = false
   allow_nested_items_to_be_public = false
   tags                            = merge(local.common_tags, { environment = "tfstate" })
