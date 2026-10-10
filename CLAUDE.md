@@ -18,6 +18,7 @@ only give the two something to drift apart over.
 | [`infra/envs/dev/README.md`](infra/envs/dev/README.md) | The dev environment, what it reads rather than creates, and its constraints |
 | [`infra/envs/prod/README.md`](infra/envs/prod/README.md) | The prod environment, how it differs from dev, and why applying it by hand defeats the approval |
 | [`.azuredevops/README.md`](.azuredevops/README.md) | The pipeline, and the configuration that lives in Azure DevOps rather than here |
+| [`docs/runbook.md`](docs/runbook.md) | What to do when a production deployment has failed, and what not to reach for |
 
 Each infrastructure README ends with a **Gotchas** section. Read it before editing that
 configuration; it exists because someone already lost time to what it records.

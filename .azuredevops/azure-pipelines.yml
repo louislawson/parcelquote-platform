@@ -281,11 +281,12 @@ stages:
   # this pipeline lives in a file a pull request can edit; this is the only one that does not.
   #
   # The stage itself is still not shared with DeployDev through a template, and the prediction
-  # that made that choice has now come true: prod runs multi-revision mode, applies twice, and
-  # verifies a revision between the two, none of which dev does. What they share is every part
-  # that did not diverge — the three assertions in templates/deploy-assertions.yml, and one
-  # plan-and-apply of one environment at one traffic split in templates/terraform-apply.yml,
-  # which dev calls once and this stage calls twice.
+  # that made that choice has now come true: prod runs multi-revision mode, applies at four
+  # different traffic splits, and verifies or measures between each, none of which dev does.
+  # What they share is every part that did not diverge — the three assertions in
+  # templates/deploy-assertions.yml, and one plan-and-apply of one environment at one traffic
+  # split in templates/terraform-apply.yml, which dev calls once and this stage calls five
+  # times, the fifth being the rollback.
   - stage: DeployProd
     displayName: "Deploy to prod"
     dependsOn: DeployDev

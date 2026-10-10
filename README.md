@@ -17,7 +17,7 @@ provisioning and deployment path can leak one. The third-party quality gates are
 exception — SonarQube Cloud and Snyk authenticate with expiring API tokens held in Azure
 DevOps service connections, because neither offers federation.
 
-Phases 0 to 5 are complete: that identity chain is live, Terraform state is remote and
+Phases 0 to 6 are complete: that identity chain is live, Terraform state is remote and
 isolated per environment, and every commit to main is linted, tested, published to the
 registry as an image tagged with its commit SHA, then deployed to a dev environment on
 Container Apps. A smoke test confirms the running revision reports the commit that built
@@ -55,14 +55,34 @@ than the ingress's, because a cold start here takes 48 seconds and that time bel
 availability measure, not a latency one — the same measurement is why the availability test runs
 with a 120-second timeout instead of the 30-second default that would have failed every check.
 
-Progressive traffic shifting and production arrive with the phases below.
+Phase 6 adds production, and with it the mechanism that makes a release reversible. Both
+environments are now the same Terraform module called twice, and production came into existence
+without changing it, which was the condition for claiming it generalises — the traffic-shifting
+inputs were added afterwards. Prod deploys behind a manual approval in multi-revision mode, where
+the outgoing revision keeps running: a release creates a revision at 0% traffic, verifies it on
+a hostname of its own while production still serves the previous one, then shifts to 10%, 50%
+and 100%, measuring the split after each shift by sampling which commit answers. Any step
+failing returns all traffic to the previous revision inside the same run.
+
+That rollback has been watched working rather than written. A run with the 10% measurement
+deliberately failed reported the real split first, then failed, rolled back, and left production
+on the previous revision; the rejected revision served about ten requests over roughly a minute,
+all of them successfully. The measured splits were 11 of 100 at the 10% step and 31 of 50 at 50%,
+which is why no step gates on the proportion — at those sample sizes ordinary binomial spread
+would fail a correct deployment. What the canary cannot do is prove a revision healthy under load,
+because there is no load: this service sees a couple of requests an hour, so the observation is
+synthetic. [docs/runbook.md](docs/runbook.md) says as much, alongside what to do when a deployment
+fails and what not to reach for.
+
+Architecture documentation and decision records are what remains.
 
 See [infra/bootstrap](infra/bootstrap/README.md) for how the foundational resources
 are provisioned and what permissions they require,
 [infra/envs/dev](infra/envs/dev/README.md) for the dev environment, what it reads from
-bootstrap rather than creating, and the constraints worth knowing before changing it, and
-[.azuredevops](.azuredevops/README.md) for the pipeline and the configuration it depends
-on that lives in Azure DevOps rather than here.
+bootstrap rather than creating, and the constraints worth knowing before changing it,
+[infra/envs/prod](infra/envs/prod/README.md) for how production differs and why applying it by
+hand defeats the approval, and [.azuredevops](.azuredevops/README.md) for the pipeline and the
+configuration it depends on that lives in Azure DevOps rather than here.
 
 ## Stack
 
@@ -89,14 +109,15 @@ Work in progress. Built in phases, each independently functional.
 - [x] **Phase 3** — Code quality and security gates
 - [x] **Phase 4** — Key Vault, managed identity and API authentication
 - [x] **Phase 5** — Monitoring, alerting, availability tests and a cost budget
-- [ ] **Phase 6** — Production environment, shared Terraform module, blue/green and canary releases
+- [x] **Phase 6** — Production environment, shared Terraform module, blue/green and canary releases
 - [ ] **Phase 7** — Architecture documentation and decision records
 
 ## Repository layout
 
     .azuredevops/  Azure Pipelines definitions
-    infra/         Terraform — bootstrap, and one configuration per environment from phase 2
+    infra/         Terraform — bootstrap, a shared module, and one configuration per environment
     app/           FastAPI service, tests and Dockerfile
+    docs/          Operational documentation
 
 ## Licence
 
