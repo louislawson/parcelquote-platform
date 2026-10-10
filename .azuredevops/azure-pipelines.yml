@@ -219,6 +219,11 @@ stages:
               testResultsFiles: "checkov-junit.xml"
               testRunTitle: "Checkov"
 
+          # All three steps below run on succeededOrFailed(), so the documentation block reports
+          # independently of the Terraform block above it. Without that the link check was skipped
+          # whenever the generated-table check failed - two unrelated checks in step order, where the
+          # first silently suppressed the second. Build 75 is the record: a genuinely broken link sat
+          # in the repository with its own gate reporting nothing at all.
           # Installed here rather than in templates/install-terraform-tools.yml because only this
           # job needs it, and the deploy jobs would pay the download for nothing. Pinned to the
           # same version the READMEs tell a contributor to run locally: two versions of
@@ -235,6 +240,7 @@ stages:
               sudo mv terraform-docs /usr/local/bin/
               terraform-docs --version
             displayName: "Verify and install terraform-docs v0.20.0"
+            condition: succeededOrFailed()
 
           # The generated Inputs and Outputs tables are the only documentation here that can go
           # stale without anyone editing it: a changed variable description leaves the table
@@ -266,6 +272,7 @@ stages:
                 exit 1
               fi
             displayName: "Check the generated documentation is current"
+            condition: succeededOrFailed()
 
           # Relative links only, and deliberately not external URLs: a gate that depends on
           # somebody else's uptime fails for reasons unrelated to the change, which is the one
@@ -295,6 +302,7 @@ stages:
               [ "$fail" -eq 0 ] || exit 1
               echo "every relative link in $count markdown files resolves"
             displayName: "Check documentation links resolve"
+            condition: succeededOrFailed()
   - stage: Publish
     displayName: "Publish image"
     condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
@@ -418,6 +426,22 @@ stages:
                       #
                       # tr -d '\r' because the CLI terminates tsv rows with CRLF on some platforms, and a weight of
                       # "100\r" is numerically fine and textually not, which is the worst kind of difference.
+                      # The staged rollout rests on the outgoing revision staying active, which is what Multiple
+                      # mode gives and Single mode specifically undoes: flipping the app to Single deactivates the
+                      # previous revision, so the rollback target is gone. Nothing downstream notices. Discovery
+                      # would find no stable revision, report "staged rollout: false", and the deploy would go
+                      # straight to 100 per cent with no canary, no measurement and a green build.
+                      #
+                      # Terraform sets the mode on every apply, so this cannot drift through this pipeline - it
+                      # drifts through a portal click, which is exactly the case where nobody is watching. Read
+                      # before the weights because a Single-mode app makes the rest of this step meaningless, and
+                      # checked here rather than asserted after the apply, where the apply has just set the mode
+                      # and the assertion would prove only that Terraform did what it said.
+                      MODE="$(az rest --method get --url "$URL" --query properties.configuration.activeRevisionsMode -o tsv | tr -d '\r')"
+                      if [ "$MODE" != "Multiple" ]; then
+                        echo "##vso[task.logissue type=error]prod is in '$MODE' revision mode rather than Multiple, so the previous revision may already have been deactivated and there is nothing to roll back to. Nothing has been written. Restore the mode with an apply and re-run."
+                        exit 1
+                      fi
                       ROWS="$(az rest --method get --url "$URL" \
                         --query "properties.configuration.ingress.traffic[].[revisionName, weight]" -o tsv | tr -d '\r')"
 
@@ -499,6 +523,7 @@ stages:
                         echo "no stable revision to hold traffic - the candidate goes straight to 100 per cent"
                       fi
 
+                      echo "revision mode:  $MODE"
                       echo "candidate:      $CANDIDATE"
                       echo "stable:         ${STABLE:-<none>}"
                       echo "staged rollout: $STAGED"
