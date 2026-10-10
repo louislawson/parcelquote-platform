@@ -41,8 +41,11 @@ bad release be undone by moving traffic instead of deploying again. The stage th
 applies four times, each time asking Terraform for a different split, and checks between
 every one.
 
-It first reads the live app to find which revision is serving. Then it applies with the new
-revision at **0%** — created, running, and reachable only on its own `---green` hostname. It
+It first reads the live app: which revision is serving, and whether the app is still in
+multi-revision mode. A mode of anything else fails the stage there, before a write, because the
+previous revision has probably been deactivated and a deployment with nothing to roll back to is
+the one case where this stage would otherwise do its work and report success. Then it applies with
+the new revision at **0%** — created, running, and reachable only on its own `---green` hostname. It
 verifies there that the new revision answers with this commit *and* that the production
 hostname is still answering with the previous one, which is what makes the first assertion
 mean anything. Traffic then moves to **10%**, **50%** and **100%**, and after each shift the

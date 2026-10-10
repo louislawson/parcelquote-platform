@@ -191,12 +191,17 @@ holding all the traffic, and correctly does nothing. An app with no previous rev
 nothing to hold traffic while a candidate is verified, so the candidate goes straight to 100%
 under Azure's own readiness gate.
 
-The third is not benign. If production has been switched out of `Multiple` revision mode, or the
-previous revision has been deactivated, a deployment goes straight to 100% with no canary, no
-measurement and no rollback available — and nothing fails. Check the mode and the revision list
-with the commands in **Is production healthy?**. Terraform restores the mode on the next apply,
-but the deployment that ran without a safety net had none, and the revision a rollback would have
-needed may be gone.
+A third cause is not benign, and it is the reason the discovery step now refuses to continue
+when the app is not in `Multiple` revision mode. Flipping production to `Single` deactivates the
+previous revision, so there is nothing to roll back to; before the guard existed, that deployment
+went straight to 100% with no canary, no measurement and a green build. It now fails at
+**Discover the revision prod is serving**, before anything is written, naming the mode it found.
+
+So `staged rollout: false` on a green build means one of the two benign causes. A deployment that
+would have been unsafe stops instead. The other half of that cause is not guarded: the previous
+revision can be deactivated by hand while the mode stays `Multiple`, which still produces
+`staged rollout: false` and still skips the canary. Check the revision list with the commands in
+**Is production healthy?** if a deploy reports it and neither benign cause applies.
 
 ## Rotating production's API key
 
