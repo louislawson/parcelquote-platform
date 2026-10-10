@@ -60,7 +60,7 @@ from the platform that happens to be running it.
 `revision_mode` is `Single`: one revision serves all traffic and the previous one is
 deactivated on each apply. Production runs `Multiple`, which is what makes traffic weights
 meaningful and keeps the outgoing revision running for a rollback to shift traffic back to —
-see [infra/envs/prod/README.md](../prod/README.md). Dev stays `Single` on purpose: there is
+see [infra/envs/prod/README.md](../prod/READMEE.md). Dev stays `Single` on purpose: there is
 nothing here that a canary would protect, and the mode is the only input that makes the two
 environments behave differently. The `traffic_weight` block is still required by the schema,
 and in this shape the module puts the whole weight on the latest revision, which is where
