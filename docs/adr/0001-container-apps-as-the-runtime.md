@@ -48,18 +48,17 @@ monitoring does not report an outage it caused itself, and the latency alert rea
 application's view rather than the ingress's, because a cold start belongs in an availability
 measure and not a latency one.
 
-**A revision suffix is spent for the life of the app.** The suffix is the short commit SHA, which
-is what makes a running revision traceable to a commit — and a suffix cannot be reused, so the
-obvious recovery from a bad release, redeploying the previous image tag, does not work. The exact
-rule is narrower than that and was measured rather than inferred;
-[docs/runbook.md](../runbook.md) states it and gives the recovery procedure that follows from
-it.
+**A revision suffix cannot be reused**, which is a platform property with consequences that
+depend on what the suffix is made of. [0014](0014-multi-revision-mode-and-traffic-weights.md)
+takes that decision and carries what it costs;
+[docs/runbook.md](../runbook.md) states the measured rule and the recovery procedure.
 
 Revisions accumulate in production, one per release, against a documented ceiling of 100 with
 nothing counting them. They cost nothing, because billing follows replicas and an idle revision
 has none.
 
-And the Terraform provider reads three of this resource's attributes back wrongly, one of which
-means production can never plan zero changes. That is a cost of the runtime choice as surely as
-the cold start is, and [infra/envs/prod/README.md](../../infra/envs/prod/README.md) records all
-three.
+And the Terraform provider reads three of this resource's attributes back wrongly, which is a
+cost of the runtime choice as surely as the cold start is.
+[infra/envs/prod/README.md](../../infra/envs/prod/README.md) records all three, and the one that
+only bites in multi-revision mode belongs to
+[0014](0014-multi-revision-mode-and-traffic-weights.md).
