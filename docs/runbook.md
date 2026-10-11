@@ -264,6 +264,11 @@ not free the suffix either.
 - **A plan that changes `latest_revision_name` or `latest_revision_fqdn` with no resource change.**
   The provider reads both one revision stale immediately after an apply. Nothing automated should
   assert against either.
+- **A production plan that reports `1 to change` when nothing has changed.** The third attribute
+  this resource reads back wrongly, and the one that shows up as a resource change rather than an
+  output: in `Multiple` mode the API does not return `template.revisionSuffix`, so every prod plan
+  proposes setting it and applying is a no-op. `1 to change` is the floor here, not a signal —
+  [`infra/envs/prod/README.md`](../infra/envs/prod/README.md) has the detail.
 - **A SaaS gate failing on a tool error.** Both Snyk tasks fail closed deliberately; check
   <https://status.snyk.io> and <https://sonarcloud.statuspage.io> before inferring an outage from
   build history.

@@ -115,7 +115,27 @@ because there is no load: this service sees a couple of requests an hour, so the
 synthetic. [docs/runbook.md](docs/runbook.md) says as much, alongside what to do when a deployment
 fails and what not to reach for.
 
-Architecture documentation and decision records are what remains.
+Phase 7 writes down why. The delivery diagram above is one of three — the others draw the
+identity chain and which resources belong to bootstrap rather than to an environment — and
+[docs/architecture.md](docs/architecture.md) carries them alongside the tradeoffs this design
+makes against the five Well-Architected pillars, each with what it does not have. Beside that
+sits a decision log: seventeen records, each with the alternatives that were rejected and what
+the choice cost, two of them pairs where a later record supersedes an earlier one rather than
+editing it. An append-only log is the only documentation here allowed to go out of date, which is
+exactly what makes it safe to add to a repository that gates its documentation — a record
+describes a moment and never claims to be current. A check in the validate stage holds each
+record to its row in the index, and it has been watched failing as well as passing.
+
+What the writing found is the argument for doing it at all. Describing the recovery path turned up
+a from-scratch rebuild that fails on a budget's `ForceNew` start date, documented in the
+prerequisites and never exercised. Writing the identity chain caught the validate stage being
+described as credential-free in one file while two new records said it holds two SaaS tokens.
+Reading the finished documentation cold — the acceptance check for this phase — found that
+bootstrap's README had never mentioned the key vaults bootstrap creates, which is where the whole
+secret story starts. And the documentation gates themselves turned out never to run on
+documentation, because both trigger blocks excluded it; the pull request trigger was widened and
+the one that deploys was deliberately left alone, since the image tag is the commit SHA and a typo
+fix would otherwise spend a production revision. [docs/adr](docs/adr/README.md) is the log.
 
 See [infra/bootstrap](infra/bootstrap/README.md) for how the foundational resources
 are provisioned and what permissions they require,
@@ -142,7 +162,10 @@ configuration it depends on that lives in Azure DevOps rather than here.
 
 ## Status
 
-Work in progress. Built in phases, each independently functional.
+Built in phases, each independently functional. All eight are complete. What
+[docs/architecture.md](docs/architecture.md) lists as missing is missing on purpose and recorded
+there rather than implied; what carries a date instead — the federated credential issuer retiring
+on 1 July 2027, with dev still unchecked — is in [the decision log](docs/adr/README.md).
 
 - [x] **Phase 0** — Repository, Azure DevOps project, federated identity, Terraform remote state
 - [x] **Phase 1** — Application, tests, Dockerfile, CI to Container Registry
@@ -151,7 +174,7 @@ Work in progress. Built in phases, each independently functional.
 - [x] **Phase 4** — Key Vault, managed identity and API authentication
 - [x] **Phase 5** — Monitoring, alerting, availability tests and a cost budget
 - [x] **Phase 6** — Production environment, shared Terraform module, blue/green and canary releases
-- [ ] **Phase 7** — Architecture documentation and decision records
+- [x] **Phase 7** — Architecture documentation and decision records
 
 ## Repository layout
 

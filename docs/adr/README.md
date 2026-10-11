@@ -49,6 +49,12 @@ Numbers are allocation order, not chronological order. They are identity, nothin
 `Decided` column below is what makes this read as a history. Start from
 [template.md](template.md).
 
+`Evidence` is the claim this log rests on, so there is a check for it:
+`python docs/adr/check-evidence.py` reads every record's `Decided` date and `Evidence` line and
+compares them with the merge commits on `main`. It runs by hand rather than in the build, for
+reasons its own docstring gives, and it found two defects the first time it was run over
+seventeen records.
+
 The validate stage checks the shape of every record: that it has a row below whose link matches
 its filename, that its number is unique, that it has the four sections and the three metadata
 lines, that a superseding status names a record that exists, and that the title, date and status
@@ -69,6 +75,16 @@ than an oversight:
 - **Individual values** — thresholds, retention windows, sizes. They live beside the resource,
   where a generated table or a Gotchas entry keeps them honest. The decision to *measure* a
   threshold rather than choose one is recorded; the number is not.
+- **Why Azure Pipelines rather than GitHub Actions.** The repository is on GitHub and the
+  pipeline is not, which is the first question a reader asks, and it is architecturally
+  significant by any measure. The honest rationale is the project's purpose, which is not
+  published — so the choice is named here rather than argued in a record that would have to be
+  evasive about why.
+- **Two reversals that changed nothing structural.** The intended consumer of
+  `latest_revision_fqdn` changed more than once and then stopped existing, before anything had
+  ever depended on it, and a deactivate step planned for multi-revision mode turned out to be
+  unnecessary before it was built. Both are corrected where they were written; neither shaped
+  the system, so neither earns a record.
 - **Open questions.** A record for something undecided is a to-do list with a template. The
   subscription id's deliberate absence from this repository is the closest call, and it is
   currently written down nowhere: it is a configuration convention rather than a structural

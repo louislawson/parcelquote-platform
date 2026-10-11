@@ -19,6 +19,12 @@ in the repository intended to be run by hand — every other module runs in the 
 - `Monitoring Metrics Publisher` on each environment's resource group for its managed
   identity, so the container app can publish telemetry to an Application Insights resource
   with local authentication disabled
+- A key vault for each environment, RBAC-authorized, holding that environment's `quote-api-key`
+  and nothing else
+- `Key Vault Secrets User` on each vault for that environment's managed identity, which is how
+  the container app resolves its secret reference, and `Key Vault Secrets Officer` for whoever
+  runs this module — but only for the environments in `local.manual_secret_environments`, which
+  is why nobody holds data-plane access to production's vault
 
 ## Why it runs by hand
 

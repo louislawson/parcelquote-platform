@@ -4,7 +4,8 @@
 
 **Decided:** 2026-08-30
 
-**Evidence:** PR #9, the first environment to run the container
+**Evidence:** the design of 2026-08-30, which named the runtime before anything was built, and
+PR #9 twenty-four days later, the first environment to run the container
 
 ## Context
 

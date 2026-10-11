@@ -94,6 +94,12 @@ live resources. Those belong beside the resource, where a generated table or a G
 them honest. This file holds the conventions and the local equivalent of each gate. `planning/`
 holds why the project exists and is not published.
 
+The runbook has one licence to break that rule: it may restate a fact in a line or two when an
+operator needs it at the moment something is failing, provided it links to the file that owns it.
+A reader who has just been paged should not have to follow a link to find out whether what they
+are looking at is a problem. Nothing else may, and the exception is not a precedent for a fourth
+copy somewhere else.
+
 **Add to a Gotchas list, never replace an entry.** Two separate edits have quietly deleted an
 existing gotcha by writing a new one over it. Only the diff catches this, so read it.
 
