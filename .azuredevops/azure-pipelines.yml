@@ -31,11 +31,18 @@ trigger:
     include: [app, infra, .azuredevops]
     exclude: [infra/bootstrap]
 
+# Wider than the CI trigger above, deliberately. The two answer different questions: this one
+# decides what gets checked, that one decides what gets deployed, and documentation belongs in
+# the first and not the second. Widening the CI trigger instead would make a typo fix build an
+# image tagged with its commit SHA, create a production revision, spend a revision suffix for the
+# life of the app and ask a human to approve it. The root files are named one at a time because
+# these filters are prefix matches with no wildcards, so a new Markdown file at the root is not
+# covered until it is added here.
 pr:
   branches:
     include: [main]
   paths:
-    include: [app, infra, .azuredevops]
+    include: [app, infra, .azuredevops, docs, README.md, CLAUDE.md]
 
 pool:
   vmImage: ubuntu-24.04
@@ -302,6 +309,100 @@ stages:
               [ "$fail" -eq 0 ] || exit 1
               echo "every relative link in $count markdown files resolves"
             displayName: "Check documentation links resolve"
+            condition: succeededOrFailed()
+
+          # The decision log's shape, not its content. A record missing from the index is
+          # invisible, and a Superseded status pointing at nothing is a dead end; both are
+          # mistakes a reviewer skims past, which is the argument for a gate rather than a
+          # convention. What no gate can check is whether a record is honest.
+          #
+          # The glob excludes README.md and template.md by construction, so the index and the
+          # template are not treated as records. Failures are collected and reported together
+          # rather than exiting at the first, which is the shape PR 43's generated-table check
+          # had to be corrected into after it reported a failure and passed.
+          #
+          # It also compares each record's date and status against its row in the index, because
+          # the index repeats both and a superseded record whose row still reads Accepted is the
+          # one drift this design invites. The row is found by the link in its first column
+          # rather than by the filename anywhere in the line: a superseded record's status cell
+          # holds a link to its successor, so a bare filename search finds the predecessor's row
+          # and compares the wrong record. That was a real bug, caught by testing the gate
+          # against the superseding pair it exists for. Nothing here contains a backslash, deliberately: an
+          # escaped sed backreference in the first draft of this step reached the file as a
+          # literal control character, which renders as nothing and reads as correct.
+          - script: |
+              set -euo pipefail
+              index="docs/adr/README.md"
+              if [ ! -f "$index" ]; then
+                echo "##vso[task.logissue type=error]$index is missing, so nothing can be indexed"
+                exit 1
+              fi
+              fail=0
+              count=0
+              numbers=""
+              for file in docs/adr/[0-9][0-9][0-9][0-9]-*.md; do
+                if [ ! -e "$file" ]; then
+                  echo "##vso[task.logissue type=error]no decision records found under docs/adr"
+                  exit 1
+                fi
+                count=$((count + 1))
+                base="$(basename "$file")"
+                number="${base%%-*}"
+                case " $numbers " in
+                  *" $number "*)
+                    echo "##vso[task.logissue type=error]$base reuses number $number"
+                    fail=1
+                    ;;
+                esac
+                numbers="$numbers $number"
+                for heading in "## Context" "## Options considered" "## Decision" "## Consequences"; do
+                  if ! grep -qxF "$heading" "$file"; then
+                    echo "##vso[task.logissue type=error]$base has no '$heading' section"
+                    fail=1
+                  fi
+                done
+                for field in Status Decided Evidence; do
+                  if ! grep -q "^[*][*]$field:[*][*] " "$file"; then
+                    echo "##vso[task.logissue type=error]$base has no $field line"
+                    fail=1
+                  fi
+                done
+                status="$(awk '/^[*][*]Status:[*][*] / { sub(/^[*][*]Status:[*][*] /, ""); print; exit }' "$file")"
+                decided="$(awk '/^[*][*]Decided:[*][*] / { sub(/^[*][*]Decided:[*][*] /, ""); print; exit }' "$file")"
+                case "$status" in
+                  Proposed|Accepted) ;;
+                  "Superseded by "*)
+                    target="$(printf '%s' "$status" | cut -d'(' -f2 | cut -d')' -f1)"
+                    if [ -z "$target" ] || [ ! -e "docs/adr/$target" ]; then
+                      echo "##vso[task.logissue type=error]$base is superseded by a record that does not exist"
+                      fail=1
+                    fi
+                    ;;
+                  *)
+                    echo "##vso[task.logissue type=error]$base has status '$status', which is not Proposed, Accepted, or Superseded by a link to its successor"
+                    fail=1
+                    ;;
+                esac
+                row="$(grep -m1 -F "| [$number]($base) |" "$index" || true)"
+                if [ -z "$row" ]; then
+                  echo "##vso[task.logissue type=error]$base has no row in $index beginning | [$number]($base) |"
+                  fail=1
+                else
+                  row_decided="$(printf '%s' "$row" | awk -F'[|]' '{ gsub(/^[ ]+|[ ]+$/, "", $4); print $4 }')"
+                  row_status="$(printf '%s' "$row" | awk -F'[|]' '{ gsub(/^[ ]+|[ ]+$/, "", $5); print $5 }')"
+                  if [ "$row_decided" != "$decided" ]; then
+                    echo "##vso[task.logissue type=error]$base is dated $decided and the index row says $row_decided"
+                    fail=1
+                  fi
+                  if [ "$row_status" != "$status" ]; then
+                    echo "##vso[task.logissue type=error]$base is '$status' and the index row says '$row_status'"
+                    fail=1
+                  fi
+                fi
+              done
+              [ "$fail" -eq 0 ] || exit 1
+              echo "$count decision records, all indexed, well formed and agreeing with the index"
+            displayName: "Check the decision log"
             condition: succeededOrFailed()
   - stage: Publish
     displayName: "Publish image"

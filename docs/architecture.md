@@ -7,7 +7,9 @@ This file describes relationships and tradeoffs. It deliberately holds none of t
 drift — resource names, thresholds, versions, retention periods, counts of live resources —
 because those live in the README beside the resource they describe, where a generated table or a
 Gotchas entry keeps them honest, and a second copy here would only give the two something to
-disagree about. Every section links to the file holding the detail.
+disagree about. Every section links to the file holding the detail, and
+[the decision log](adr/README.md) holds why each of these was chosen and what else was on the
+table.
 
 Two things about this platform are load-bearing and easy to miss. **There is no production
 traffic and there never will be** — "production" here means an environment behind an approval
