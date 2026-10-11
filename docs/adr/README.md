@@ -83,5 +83,5 @@ than an oversight:
 | [0003](0003-federated-identity.md) | Federated identity, and no stored Azure credential | 2026-09-02 | Accepted |
 | [0004](0004-remote-state-and-the-bootstrap-seam.md) | Remote state in Azure Storage, and a bootstrap applied by hand | 2026-09-03 | Accepted |
 | [0005](0005-public-repository.md) | A public repository, and the stage split that follows from it | 2026-08-30 | Accepted |
-| [0006](0006-gates-fail-closed.md) | Gates fail closed, and two of them hold tokens | 2026-09-27 | Accepted |
+| [0006](0006-gates-fail-closed.md) | Gates fail closed, and two of them hold tokens | 2026-09-27 | Proposed |
 | [0007](0007-documentation-builds-on-a-pull-request.md) | Documentation builds on a pull request and deploys nothing | 2026-10-11 | Accepted |
