@@ -322,8 +322,10 @@ stages:
           # had to be corrected into after it reported a failure and passed.
           #
           # It also compares each record's date and status against its row in the index, because
-          # the index repeats both and a superseded record whose row still reads Accepted is the
-          # one drift this design invites. The row is found by the link in its first column
+          # the index repeats all three and a superseded record whose row still reads Accepted is
+          # the one drift this design invites. The title comes out of the heading by the em dash
+          # rather than by a regex, so the comparison does not depend on how awk counts a
+          # multibyte character. The row is found by the link in its first column
           # rather than by the filename anywhere in the line: a superseded record's status cell
           # holds a link to its successor, so a bare filename search finds the predecessor's row
           # and compares the wrong record. That was a real bug, caught by testing the gate
@@ -388,8 +390,14 @@ stages:
                   echo "##vso[task.logissue type=error]$base has no row in $index beginning | [$number]($base) |"
                   fail=1
                 else
+                  row_title="$(printf '%s' "$row" | awk -F'[|]' '{ gsub(/^[ ]+|[ ]+$/, "", $3); print $3 }')"
                   row_decided="$(printf '%s' "$row" | awk -F'[|]' '{ gsub(/^[ ]+|[ ]+$/, "", $4); print $4 }')"
                   row_status="$(printf '%s' "$row" | awk -F'[|]' '{ gsub(/^[ ]+|[ ]+$/, "", $5); print $5 }')"
+                  title="$(awk -v sep=" — " '/^# / { i = index($0, sep); if (i > 0) print substr($0, i + length(sep)); exit }' "$file")"
+                  if [ "$row_title" != "$title" ]; then
+                    echo "##vso[task.logissue type=error]$base is titled '$title' and the index row says '$row_title'"
+                    fail=1
+                  fi
                   if [ "$row_decided" != "$decided" ]; then
                     echo "##vso[task.logissue type=error]$base is dated $decided and the index row says $row_decided"
                     fail=1

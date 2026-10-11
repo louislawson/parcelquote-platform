@@ -140,7 +140,7 @@ file and the target.
 It checks the decision log the same way, and with the same caveat: that every record is listed in
 [`docs/adr/README.md`](docs/adr/README.md), that its number is unique, that it has the four
 sections and the three metadata lines, that a `Superseded by` status names a record that exists,
-and that the date and status in its index row agree with the record. Start a new one from
+and that the title, date and status in its index row agree with the record. Start a new one from
 [`docs/adr/template.md`](docs/adr/template.md), and land a superseding pair in a single commit — a
 record pointing forward at a successor that does not exist yet fails the build, deliberately.
 

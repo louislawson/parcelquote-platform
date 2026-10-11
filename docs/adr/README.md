@@ -51,8 +51,8 @@ Numbers are allocation order, not chronological order. They are identity, nothin
 
 The validate stage checks the shape of every record: that it has a row below whose link matches
 its filename, that its number is unique, that it has the four sections and the three metadata
-lines, that a superseding status names a record that exists, and that the date and status in
-that row agree with the record itself. The table repeats what the records say, so something has
+lines, that a superseding status names a record that exists, and that the title, date and status
+in that row agree with the record itself. The table repeats what the records say, so something has
 to hold the two together. What no gate can check is whether a record is honest.
 
 ## What is deliberately not recorded
@@ -70,9 +70,10 @@ than an oversight:
   where a generated table or a Gotchas entry keeps them honest. The decision to *measure* a
   threshold rather than choose one is recorded; the number is not.
 - **Open questions.** A record for something undecided is a to-do list with a template. The
-  subscription id's deliberate absence from this repository is the closest call and stays a
-  Gotchas entry in [infra/envs/dev/README.md](../../infra/envs/dev/README.md): it is a
-  configuration convention, not a structural choice, and it is reversible in an afternoon.
+  subscription id's deliberate absence from this repository is the closest call, and it is
+  currently written down nowhere: it is a configuration convention rather than a structural
+  choice, reversible in an afternoon, and if it earns anything it is a Gotchas entry beside the
+  configuration rather than a record here. Saying so is the point of this list.
 
 ## The log
 
@@ -85,3 +86,13 @@ than an oversight:
 | [0005](0005-public-repository.md) | A public repository, and the stage split that follows from it | 2026-08-30 | Accepted |
 | [0006](0006-gates-fail-closed.md) | Gates fail closed, and two of them hold tokens | 2026-09-27 | Accepted |
 | [0007](0007-documentation-builds-on-a-pull-request.md) | Documentation builds on a pull request and deploys nothing | 2026-10-11 | Accepted |
+| [0008](0008-the-api-key-lives-in-key-vault.md) | The API key lives in Key Vault, resolved by the app's own identity | 2026-09-28 | Accepted |
+| [0009](0009-rotation-requires-a-deployment.md) | Rotating the key requires a deployment | 2026-09-28 | Superseded by [0010](0010-rotation-is-a-vault-write-and-a-wait.md) |
+| [0010](0010-rotation-is-a-vault-write-and-a-wait.md) | Rotation is a vault write and a wait | 2026-10-10 | Accepted |
+| [0011](0011-a-module-per-resource-type.md) | A module per resource type | 2026-08-30 | Superseded by [0012](0012-one-workload-module.md) |
+| [0012](0012-one-workload-module.md) | One workload module, called twice | 2026-10-06 | Accepted |
+| [0013](0013-measured-alert-thresholds.md) | Alert thresholds from measured data, and no failure-rate alert | 2026-10-04 | Accepted |
+| [0014](0014-multi-revision-mode-and-traffic-weights.md) | Multi-revision mode, weights in Terraform, and the commit SHA as the suffix | 2026-10-08 | Accepted |
+| [0015](0015-the-canary-measures-the-split.md) | The canary measures the split and gates on nothing proportional | 2026-10-09 | Accepted |
+| [0016](0016-production-scales-to-zero.md) | Production scales to zero | 2026-10-07 | Accepted |
+| [0017](0017-no-automated-dependency-updates.md) | Automated dependency and base image updates, declined | 2026-10-07 | Accepted |
