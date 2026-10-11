@@ -1,6 +1,6 @@
 # 0003 — Federated identity, and no stored Azure credential
 
-**Status:** Superseded by [0099](0099-does-not-exist.md)
+**Status:** Accepted
 
 **Decided:** 2026-09-02
 
