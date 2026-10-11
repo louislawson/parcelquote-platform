@@ -92,6 +92,15 @@ operator holds officer access so the key can be written and rotated; **in produc
 and every deploy asserts that rather than assuming it, so the day someone grants it to fix
 something unrelated the build says so.
 
+**One thing in state looks like a credential and is not.** The container's environment carries
+Application Insights' connection string, instrumentation key and all, so it reaches Terraform
+state as a plain value — deliberately, and only because local authentication is disabled on the
+component. The comment beside it in
+[infra/modules/workload/main.tf](../infra/modules/workload/main.tf) has the reasoning and the
+condition that goes with it: turning local authentication back on has to move the string into a
+secret block in the same change, because that single edit is what would make it a live
+credential.
+
 **The exceptions are documented rather than hidden.** SonarQube Cloud and Snyk hold expiring API
 tokens in Azure DevOps service connections, because neither vendor offers federation. They reach
 no Azure resource, and their expiry dates are recorded with the rest of the configuration that is
