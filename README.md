@@ -17,6 +17,45 @@ provisioning and deployment path can leak one. The third-party quality gates are
 exception — SonarQube Cloud and Snyk authenticate with expiring API tokens held in Azure
 DevOps service connections, because neither offers federation.
 
+```mermaid
+flowchart TD
+    validate["Validate<br/>lint, tests, quality gate,<br/>Snyk, Checkov, docs<br/>no Azure credential: a pull<br/>request runs this and stops"]
+    validate -->|"on main"| publish["Publish<br/>image tagged with<br/>the commit SHA"]
+    publish --> dev["Deploy to dev<br/>apply, then poll /version"]
+    dev --> approval{{"Approval"}}
+    approval --> staged
+
+    subgraph prodstage["Deploy to prod"]
+        direction TB
+        staged["read the live revision,<br/>then apply the<br/>candidate at 0%"]
+        verify{"candidate serves this commit,<br/>production the previous one?"}
+        ten["10%, measured"]
+        fifty["50%, measured"]
+        hundred["100%, measured"]
+        assertions["smoke test and the<br/>standing assertions"]
+        rollback["traffic back to the<br/>previous revision"]
+
+        staged --> verify
+        verify -->|"yes"| ten --> fifty --> hundred --> assertions
+        verify -->|"no"| rollback
+        ten -->|"no"| rollback
+        fifty -->|"no"| rollback
+        hundred -->|"no"| rollback
+    end
+
+    assertions --> served(["the new revision<br/>serves production"])
+    rollback --> reverted(["the previous revision serves,<br/>and the build fails"])
+```
+
+The four failure edges are the ordinary case rather than a guarantee. The rollback step is gated
+on the rollout having been staged, so a re-run of a build that already deployed fails without one
+— correctly, because in that case there is no previous revision to return to.
+
+[docs/architecture.md](docs/architecture.md) is the longer form: the identity chain and what each
+principal cannot do, which resources belong to bootstrap against which belong to an environment,
+the tradeoffs this design makes against the five Well-Architected pillars, and how the platform
+would be rebuilt.
+
 Phases 0 to 6 are complete: that identity chain is live, Terraform state is remote and
 isolated per environment, and every commit to main is linted, tested, published to the
 registry as an image tagged with its commit SHA, then deployed to a dev environment on
@@ -26,9 +65,10 @@ it. Pull requests run the same checks with no access to Azure.
 Every commit also passes through gates that can stop it. Test results and coverage are
 published to the run summary, a SonarCloud quality gate blocks on its conditions, Checkov
 checks the Terraform, and Snyk tests the dependency tree and the built image before either
-can reach the registry. Each gate has been watched failing as well as passing: a pinned
+can reach the registry. Two of them have been watched failing as well as passing: a pinned
 vulnerable dependency and a removed policy suppression both stop the build, which is the
-difference between a gate that is trusted and one that is known to work.
+difference between a gate that is trusted and one that is known to work. The quality gate and the
+image scan have only ever been seen passing.
 
 Phase 4 adds the application's own secret, and where it lives is the point. `POST /quote`
 now requires an API key; before that the service was open to anyone who found its hostname.
@@ -117,7 +157,7 @@ Work in progress. Built in phases, each independently functional.
     .azuredevops/  Azure Pipelines definitions
     infra/         Terraform — bootstrap, a shared module, and one configuration per environment
     app/           FastAPI service, tests and Dockerfile
-    docs/          Operational documentation
+    docs/          Architecture and operational documentation
 
 ## Licence
 

@@ -13,6 +13,7 @@ only give the two something to drift apart over.
 | File | What it answers |
 | ---- | --------------- |
 | [`README.md`](README.md) | What the project is, the stack, and which phases are done |
+| [`docs/architecture.md`](docs/architecture.md) | How the pieces fit, what each identity cannot do, the tradeoffs, and the rebuild path |
 | [`app/README.md`](app/README.md) | The pricing model, the API and its authentication, local development |
 | [`infra/bootstrap/README.md`](infra/bootstrap/README.md) | The foundational resources, why it runs by hand, what permissions it needs |
 | [`infra/envs/dev/README.md`](infra/envs/dev/README.md) | The dev environment, what it reads rather than creates, and its constraints |
@@ -79,6 +80,15 @@ environment somewhere else must not silently widen a privilege here.
 between `<!-- BEGIN_TF_DOCS -->` and `<!-- END_TF_DOCS -->` and come from terraform-docs.
 Change `variables.tf` or `outputs.tf` and regenerate; do not hand-edit the table. The validate
 stage checks this, so a stale table now fails the build rather than going unnoticed.
+
+**One fact, one file.** Each document has a job, and the only thing one may take from another is a
+link. A README says what is true now and what will bite you. [`docs/runbook.md`](docs/runbook.md)
+says what to do when production is broken. [`docs/architecture.md`](docs/architecture.md) says how
+the pieces fit and what the design traded away — relationships and tradeoffs, and deliberately
+none of the values that drift: resource names, thresholds, versions, retention periods, counts of
+live resources. Those belong beside the resource, where a generated table or a Gotchas entry keeps
+them honest. This file holds the conventions and the local equivalent of each gate. `planning/`
+holds why the project exists and is not published.
 
 **Add to a Gotchas list, never replace an entry.** Two separate edits have quietly deleted an
 existing gotcha by writing a new one over it. Only the diff catches this, so read it.
