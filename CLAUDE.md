@@ -14,6 +14,7 @@ only give the two something to drift apart over.
 | ---- | --------------- |
 | [`README.md`](README.md) | What the project is, the stack, and which phases are done |
 | [`docs/architecture.md`](docs/architecture.md) | How the pieces fit, what each identity cannot do, the tradeoffs, and the rebuild path |
+| [`docs/adr/`](docs/adr/README.md) | Why a thing was chosen, what else was on the table, and what the choice cost |
 | [`app/README.md`](app/README.md) | The pricing model, the API and its authentication, local development |
 | [`infra/bootstrap/README.md`](infra/bootstrap/README.md) | The foundational resources, why it runs by hand, what permissions it needs |
 | [`infra/envs/dev/README.md`](infra/envs/dev/README.md) | The dev environment, what it reads rather than creates, and its constraints |
@@ -83,8 +84,11 @@ stage checks this, so a stale table now fails the build rather than going unnoti
 
 **One fact, one file.** Each document has a job, and the only thing one may take from another is a
 link. A README says what is true now and what will bite you. [`docs/runbook.md`](docs/runbook.md)
-says what to do when production is broken. [`docs/architecture.md`](docs/architecture.md) says how
-the pieces fit and what the design traded away — relationships and tradeoffs, and deliberately
+says what to do when production is broken. A record in [`docs/adr/`](docs/adr/README.md) says
+what was decided, when, against what, and what it cost; it is append-only and is allowed to go
+out of date, which is what makes it safe to keep.
+[`docs/architecture.md`](docs/architecture.md) says how the pieces fit and what the design
+traded away — relationships and tradeoffs, and deliberately
 none of the values that drift: resource names, thresholds, versions, retention periods, counts of
 live resources. Those belong beside the resource, where a generated table or a Gotchas entry keeps
 them honest. This file holds the conventions and the local equivalent of each gate. `planning/`
@@ -132,6 +136,13 @@ terraform-docs markdown table --output-file README.md --output-check infra/envs/
 The pipeline also checks that every relative link in the tracked Markdown resolves. There is no
 one-line local equivalent; it is a loop in the validate stage, and the failure message names the
 file and the target.
+
+It checks the decision log the same way, and with the same caveat: that every record is listed in
+[`docs/adr/README.md`](docs/adr/README.md), that its number is unique, that it has the four
+sections and the three metadata lines, that a `Superseded by` status names a record that exists,
+and that the date and status in its index row agree with the record. Start a new one from
+[`docs/adr/template.md`](docs/adr/template.md), and land a superseding pair in a single commit — a
+record pointing forward at a successor that does not exist yet fails the build, deliberately.
 
 A suppression is `#checkov:skip=CKV_...:<reason>` where the reason states the decision that
 was made and why. Name a phase only when the work genuinely is deferred to it; a skip that

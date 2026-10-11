@@ -54,7 +54,8 @@ on the rollout having been staged, so a re-run of a build that already deployed 
 [docs/architecture.md](docs/architecture.md) is the longer form: the identity chain and what each
 principal cannot do, which resources belong to bootstrap against which belong to an environment,
 the tradeoffs this design makes against the five Well-Architected pillars, and how the platform
-would be rebuilt.
+would be rebuilt. [docs/adr](docs/adr/README.md) is the decision log behind it: why each of those
+was chosen, what else was on the table, and what the choice cost.
 
 Phases 0 to 6 are complete: that identity chain is live, Terraform state is remote and
 isolated per environment, and every commit to main is linted, tested, published to the
@@ -157,7 +158,7 @@ Work in progress. Built in phases, each independently functional.
     .azuredevops/  Azure Pipelines definitions
     infra/         Terraform — bootstrap, a shared module, and one configuration per environment
     app/           FastAPI service, tests and Dockerfile
-    docs/          Architecture and operational documentation
+    docs/          Architecture, the decision log, and the runbook
 
 ## Licence
 

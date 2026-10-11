@@ -19,12 +19,21 @@ rather than in this repository.
 
 ## What the pipeline does
 
-**Validate** runs on every pull request and every commit to main. It builds the
-Dockerfile's test target, which runs ruff and pytest, builds the runtime target, and
-checks formatting, validates and lints every Terraform configuration. It also checks the
-documentation: that every generated Inputs and Outputs table matches the configuration it
-describes, and that every relative link in the Markdown resolves. Nothing in this stage touches
-Azure, so it runs with no credentials.
+**Validate** runs on every pull request, and on a commit to main that changes something
+deployable. It builds the Dockerfile's test target, which runs ruff and pytest, builds the
+runtime target, and checks formatting, validates and lints every Terraform configuration. It also
+checks the documentation: that every generated Inputs and Outputs table matches the configuration
+it describes, that every relative link in the Markdown resolves, and that every decision record
+is well formed and agrees with its row in the index. Nothing in this stage reaches Azure, which
+is what allows it to run on a pull request — but it is not credential-free, because the two SaaS
+gates run here and their connections hold real tokens.
+
+**The two trigger blocks are deliberately different.** A pull request builds when `app`, `infra`,
+`.azuredevops`, `docs`, `README.md` or `CLAUDE.md` changes; a commit to main builds only for the
+first three. So documentation is checked on the pull request that introduces it and deploys
+nothing — see
+[docs/adr/0007](../docs/adr/0007-documentation-builds-on-a-pull-request.md) for why widening the
+main trigger instead would have made a typo fix create a production revision.
 
 **Publish**, **Deploy to dev** and **Deploy to prod** run only on main. Publish builds the
 runtime image with the short commit SHA as both its tag and its `GIT_SHA` build argument,
